@@ -8,7 +8,7 @@ import { createScrollPreserver } from '../ui/settings-scroll-binding.js';
 export function formatFailureLog(entry) {
     return [
         `${entry.source} · ${entry.title}`, entry.time, entry.conversation, entry.model,
-        t("本次 AI 原始返回"), entry.response || t("本次未取得 AI 回复正文"),
+        ...(entry.kind === 'tts' ? [] : [t("本次 AI 原始返回"), entry.response || t("本次未取得 AI 回复正文")]),
         t("这次是什么问题"), entry.explanation, t("你可以怎么做"), entry.suggestion,
         t("技术详情"), entry.detail || t("当前调用通道未提供详细错误信息"),
     ].filter(Boolean).join('\n');
@@ -28,7 +28,7 @@ export function buildFailureLogCard(entry) {
             </div>
             <button type="button" class="phone-ios-mini-btn" data-copy-log="${entry.id}" aria-label="${t`复制本条日志`}">${t`复制`}</button>
         </div>
-        ${details(t("本次 AI 原始返回"), `<pre>${response}</pre>`)}
+        ${entry.kind === 'tts' ? '' : details(t("本次 AI 原始返回"), `<pre>${response}</pre>`)}
         ${details(t("这次是什么问题"), `<p>${escapeHtml(entry.explanation)}</p>`)}
         ${details(t("你可以怎么做"), `<p>${escapeHtml(entry.suggestion)}</p>`)}
         ${details(t("技术详情"), `<pre>${escapeHtml(entry.detail || t("当前调用通道未提供详细错误信息"))}</pre>`)}
@@ -73,7 +73,7 @@ export function createLogsPage(ctx) {
             container.innerHTML = buildSettingsPageFrame({
                 title: t("日志"),
                 bodyClass: 'phone-app-body phone-settings-scroll phone-ios-grouped-page yuzi-failure-logs',
-                bodyHtml: `<h2 class="phone-ios-group-header">${t("当前聊天的 QQ 日志")}</h2>
+                bodyHtml: `<h2 class="phone-ios-group-header">${t("QQ / TTS 日志")}</h2>
                     <section class="phone-ios-group">
                         <div class="phone-ios-row"><span class="phone-ios-row-label" data-log-count role="status"></span></div>
                         <div class="phone-ios-row phone-ios-row-empty is-danger" data-log-trimmed hidden>${t`日志文本已达到内存上限，部分最旧记录已移除。`}</div>

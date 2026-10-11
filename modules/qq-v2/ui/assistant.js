@@ -109,6 +109,7 @@ export function createAssistantUI({ facade, createElement: el, createButton: but
             assetRow('avatarFrameAssetId'),
             assetRow('bubbleAssetId'),
             profileEditor.messageColorRow({ ...owner, value: character.messageTextColor || 'black' }),
+            profileEditor.voiceRow({ ...owner, value: character.voiceId }),
         ]);
         const footer = el('p', 'phone-ios-group-footer');
         footer.textContent = t("背景、头像框、气泡选好后立即生效；头像框与气泡素材来自图片资料。");

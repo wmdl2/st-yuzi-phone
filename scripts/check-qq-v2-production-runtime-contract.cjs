@@ -125,6 +125,13 @@ async function testProductionRuntimeOwnsTheCurrentScopeAndFacade() {
                 keywords: [],
             },
             proactive: { enabled: false, everyTurns: 5, privateWeight: 50 },
+            voice: {
+                baseUrl: 'https://api.fish.audio/v1',
+                model: 's2.1-pro-free',
+                directFetch: false,
+                apiKeySaved: false,
+                timeoutMs: 120000,
+            },
         },
     });
 
@@ -161,6 +168,13 @@ async function testProductionRuntimeOwnsTheCurrentScopeAndFacade() {
                 keywords: [],
             },
             proactive: { enabled: false, everyTurns: 5, privateWeight: 50 },
+            voice: {
+                baseUrl: 'https://api.fish.audio/v1',
+                model: 's2.1-pro-free',
+                directFetch: false,
+                apiKeySaved: false,
+                timeoutMs: 120000,
+            },
         },
     });
     assert.equal(facadeBootstrap.globalSettings.groupReplyPresetId, 'builtin-group-reply');

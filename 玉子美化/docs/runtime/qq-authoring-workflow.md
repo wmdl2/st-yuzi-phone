@@ -51,6 +51,8 @@ CSS 以 `:scope` 表示当前 QQ 根节点或当前通知节点。允许普通�
 
 主题 CSS 只能作用在隔离后的 QQ 根节点及其后代，不能选择小手机外壳。
 
+语音主题可美化 `.yuzi-qq-voice-message`、播放按钮、展开原文和 `.yuzi-qq-voice-spinner`，但不要接管合成／播放业务或隐藏操作。加载态为 `.is-loading`，播放态为 `.is-playing`；已知声音标记不生成标签节点。人物「角色音色」复用现有分组行；TTS 连接页在小手机主设置中，不属于 QQ 主题作用域。真实配音仍由真实小手机验收，制作包不发起 TTS 请求。
+
 通知 CSS **不得接管位置、调度、交互、动画或生命周期**。不要设置 `position`、`inset`、`top/right/bottom/left`、`z-index`、`pointer-events`、`animation*` 或 `transform`；这些仍由现有全屏浮层负责。通知外观准备失败时，宿主仍应显示默认通知。
 
 ## 4. `project:add-qq` 参数

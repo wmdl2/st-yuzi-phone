@@ -82,6 +82,90 @@ function cloneGlobalSettings(settings) {
         hostContextExcludeTags: Object.freeze(normalizeQQV2TagNames(source.hostContextExcludeTags)),
         worldbook: cloneWorldbookSettings(source.worldbook),
         proactive: cloneProactiveSettings(source.proactive),
+        voice: cloneVoiceSettings(source.voice),
+    });
+}
+
+/** 音色库条目：UI 只拿到名称与音色 ID，不需要存储细节。 */
+function cloneVoiceEntry(entry) {
+    const source = asObject(entry);
+    return Object.freeze({
+        entryId: asText(source.entryId, 256),
+        name: asText(source.name, 120),
+        voiceId: asText(source.voiceId, 256),
+        category: asText(source.category, 8),
+        note: asText(source.note, 120),
+    });
+}
+
+function cloneAssistantCharacter(character) {
+    const source = asObject(character);
+    return Object.freeze({
+        characterId: asText(source.characterId, 256),
+        formalName: asText(source.formalName, 120),
+        persona: String(source.persona ?? ''),
+        avatarAssetId: asText(source.avatarAssetId, 256),
+        ...(source.avatarFrameAssetId ? { avatarFrameAssetId: asText(source.avatarFrameAssetId, 256) } : {}),
+        ...(source.bubbleAssetId ? { bubbleAssetId: asText(source.bubbleAssetId, 256) } : {}),
+        avatarUrl: asText(source.avatarUrl, 1024),
+        messageTextColor: asText(source.messageTextColor, 32) || 'black',
+        voiceId: asText(source.voiceId, 256),
+        defaultPersona: String(source.defaultPersona ?? ''),
+        isBuiltIn: source.isBuiltIn === true,
+    });
+}
+
+function cloneVoiceImportResult(result) {
+    const source = asObject(result);
+    return Object.freeze({
+        format: asText(source.format, 64),
+        libraryAdded: Math.max(0, Math.trunc(asNumber(asObject(source.library).added))),
+        libraryUpdated: Math.max(0, Math.trunc(asNumber(asObject(source.library).updated))),
+        rolesAdded: Math.max(0, Math.trunc(asNumber(asObject(source.roles).added))),
+        rolesUpdated: Math.max(0, Math.trunc(asNumber(asObject(source.roles).updated))),
+        settingsApplied: Boolean(source.settings),
+        bindingsApplied: Math.max(0, Math.trunc(asNumber(asObject(source.bindings).applied))),
+        bindingsSkipped: Object.freeze(asArray(asObject(source.bindings).skipped).map((name) => asText(name, 120))),
+        apiKeyImported: source.apiKeyImported === true,
+    });
+}
+
+function cloneVoiceSettings(settings) {
+    const source = asObject(settings);
+    const timeoutMs = Number(source.timeoutMs);
+    return Object.freeze({
+        baseUrl: asText(source.baseUrl, 2048),
+        model: asText(source.model, 120),
+        directFetch: source.directFetch === true,
+        apiKeySaved: source.apiKeySaved === true,
+        timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.trunc(timeoutMs) : 120000,
+    });
+}
+
+function cloneVoicePresetState(value) {
+    const source = asObject(value);
+    return {
+        selectedPresetId: asText(source.selectedPresetId, 256),
+        presets: Object.freeze(asArray(source.presets).map(preset => Object.freeze({
+            ...cloneVoiceSettings(preset),
+            presetId: asText(preset?.presetId, 256),
+            name: asText(preset?.name, 120),
+        }))),
+    };
+}
+
+/** Voice audio metadata exposed to the UI; the blob itself is fetched separately. */
+function cloneMessageVoice(value) {
+    const source = asObject(value);
+    const assetId = asText(source.assetId, 256);
+    if (!assetId) return null;
+    return Object.freeze({
+        assetId,
+        mimeType: asText(source.mimeType, 64),
+        size: Math.max(0, Math.trunc(asNumber(source.size))),
+        durationMs: Math.max(0, Math.trunc(asNumber(source.durationMs))),
+        voiceId: asText(source.voiceId, 256),
+        generatedAt: Math.max(0, Math.trunc(asNumber(source.generatedAt))),
     });
 }
 
@@ -347,6 +431,7 @@ function cloneConversation(conversation, storyTime = '') {
         ...((source.avatarFrameAssetId || person.avatarFrameAssetId) ? { avatarFrameAssetId: asText(source.avatarFrameAssetId || person.avatarFrameAssetId, 256) } : {}),
         ...((source.bubbleAssetId || person.bubbleAssetId) ? { bubbleAssetId: asText(source.bubbleAssetId || person.bubbleAssetId, 256) } : {}),
         messageTextColor: asText(source.messageTextColor || person.messageTextColor, 32),
+        ...(kind === 'private' && (source.voiceId || person.voiceId) ? { voiceId: asText(source.voiceId || person.voiceId, 256) } : {}),
         backgroundAssetId: asText(source.backgroundAssetId, 256),
         remark: asText(source.remark, 120),
         profileBackgroundAssetId: asText(source.profileBackgroundAssetId || person.profileBackgroundAssetId, 256),
@@ -414,6 +499,7 @@ function cloneMessage(message) {
         assetId: asText(source.assetId, 256),
         generatedImagePath: asText(source.generatedImagePath, 2048),
         generatedAt: Math.max(0, Math.trunc(asNumber(source.generatedAt))),
+        voice: cloneMessageVoice(source.voice),
         selectedForInjection: source.selectedForInjection === true,
     });
 }
@@ -448,6 +534,7 @@ function clonePerson(person) {
         gender: asText(source.gender, 120),
         birthday: asText(source.birthday, 120),
         profileBackgroundAssetId: asText(source.profileBackgroundAssetId, 256),
+        voiceId: asText(source.voiceId, 256),
     });
 }
 function cloneProfile(profile) {
@@ -461,6 +548,7 @@ function cloneProfile(profile) {
         gender: asText(source.gender, 120),
         birthday: asText(source.birthday, 120),
         profileBackgroundAssetId: asText(source.profileBackgroundAssetId, 256),
+        voiceId: asText(source.voiceId, 256),
     });
 }
 
@@ -659,7 +747,10 @@ export function createQQV2Facade(options = {}) {
                 });
             },
             async assistantCharacters() {
-                try { return { ok: true, characters: await runtime.listAssistantCharacters() }; }
+                try {
+                    const characters = await runtime.listAssistantCharacters();
+                    return { ok: true, characters: asArray(characters).map(cloneAssistantCharacter) };
+                }
                 catch (error) { return failed(error); }
             },
             async assistantConversations() {
@@ -793,6 +884,38 @@ export function createQQV2Facade(options = {}) {
                     return failed(error);
                 }
             },
+            async voiceRender(input = {}) {
+                if (typeof runtime.getSnapshot !== 'function') return unavailable('getSnapshot');
+                if (typeof runtime.acquireVoiceRender !== 'function') return unavailable('acquireVoiceRender');
+                try {
+                    const snapshot = asObject(await runtime.getSnapshot());
+                    const context = cloneContext(snapshot.context);
+                    const assetId = asText(input.assetId, 256);
+                    if (!context.scopeId) return unavailable('currentScope');
+                    if (!assetId) return Object.freeze({ ok: false, status: 'invalid', reason: 'asset-required' });
+                    const result = asObject(await runtime.acquireVoiceRender({
+                        scopeId: context.scopeId,
+                        assetId,
+                    }));
+                    const render = cloneMediaRender(result);
+                    if (!render.leaseId || !render.url) {
+                        return Object.freeze({ ok: false, status: 'not-found', reason: 'voice-not-found' });
+                    }
+                    return Object.freeze({
+                        ok: true,
+                        status: asText(snapshot.phase, 32) || 'ready',
+                        voice: Object.freeze({
+                            assetId: asText(result.assetId, 256),
+                            mimeType: asText(result.mimeType, 64),
+                            size: Math.max(0, Math.trunc(asNumber(result.size))),
+                            durationMs: Math.max(0, Math.trunc(asNumber(result.durationMs))),
+                        }),
+                        render,
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
             async stickerRender(input = {}) {
                 if (typeof runtime.acquireStickerRender !== 'function') return unavailable('acquireStickerRender');
                 try {
@@ -879,6 +1002,83 @@ export function createQQV2Facade(options = {}) {
                     status: asText(snapshot.phase, 32) || 'ready',
                     proactive: cloneProactiveSettings(proactive),
                 });
+            },
+            async voiceSettings() {
+                if (typeof runtime.getVoiceSettings !== 'function') return unavailable('getVoiceSettings');
+                try {
+                    return Object.freeze({ ok: true, status: 'ready', settings: cloneVoiceSettings(await runtime.getVoiceSettings()) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async voicePresets() {
+                if (typeof runtime.getVoicePresets !== 'function') return unavailable('getVoicePresets');
+                try {
+                    return Object.freeze({ ok: true, status: 'ready', ...cloneVoicePresetState(await runtime.getVoicePresets()) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async voiceLibrary() {
+                if (typeof runtime.listVoiceLibrary !== 'function') return unavailable('listVoiceLibrary');
+                try {
+                    const entries = await runtime.listVoiceLibrary();
+                    return Object.freeze({
+                        ok: true,
+                        status: 'ready',
+                        entries: Object.freeze(asArray(entries).map(cloneVoiceEntry)),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async voiceBindings() {
+                if (typeof runtime.getSnapshot !== 'function') return unavailable('getSnapshot');
+                if (typeof runtime.listVoiceBindings !== 'function') return unavailable('listVoiceBindings');
+                try {
+                    const snapshot = asObject(await runtime.getSnapshot());
+                    const context = cloneContext(snapshot.context);
+                    if (!context.scopeId) return unavailable('currentScope');
+                    const result = asObject(await runtime.listVoiceBindings({ scopeId: context.scopeId }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'ready',
+                        bindings: Object.freeze(asArray(result.bindings).map((binding) => {
+                            const source = asObject(binding);
+                            return Object.freeze({
+                                personId: asText(source.personId, 256),
+                                name: asText(source.name, 120),
+                                voiceId: asText(source.voiceId, 256),
+                                effectiveVoiceId: asText(source.effectiveVoiceId, 256),
+                                isSelf: source.isSelf === true,
+                                isAssistant: source.isAssistant === true,
+                            });
+                        })),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async fishVoicePack() {
+                if (typeof runtime.readFishVoicePack !== 'function') return unavailable('readFishVoicePack');
+                try {
+                    const result = asObject(await runtime.readFishVoicePack());
+                    return Object.freeze({
+                        ok: true,
+                        status: 'ready',
+                        available: result.available === true,
+                        format: asText(result.format, 64),
+                        libraryCount: Math.max(0, Math.trunc(asNumber(result.libraryCount))),
+                        bindingCount: Math.max(0, Math.trunc(asNumber(result.bindingCount))),
+                        hasApiKey: result.hasApiKey === true,
+                        settings: Object.freeze({
+                            baseUrl: asText(asObject(result.settings).baseUrl, 2048),
+                            model: asText(asObject(result.settings).model, 120),
+                        }),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
             },
         }),
         intent: Object.freeze({
@@ -1838,6 +2038,241 @@ export function createQQV2Facade(options = {}) {
                             message: cloneMessage(result.message),
                             previousImagePath: asText(result.previousImagePath, 2048),
                         }),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async synthesizeVoice(input = {}) {
+                if (typeof runtime.getSnapshot !== 'function') return unavailable('getSnapshot');
+                if (typeof runtime.getConversation !== 'function') return unavailable('getConversation');
+                if (typeof runtime.synthesizeVoice !== 'function') return unavailable('synthesizeVoice');
+                try {
+                    const snapshot = asObject(await runtime.getSnapshot());
+                    const context = cloneContext(snapshot.context);
+                    const conversationId = asText(input.conversationId, 256);
+                    const messageId = asText(input.messageId, 256);
+                    if (!context.scopeId) return unavailable('currentScope');
+                    if (!conversationId) {
+                        return Object.freeze({ ok: false, status: 'invalid', reason: 'conversation-required' });
+                    }
+                    if (!messageId) {
+                        return Object.freeze({ ok: false, status: 'invalid', reason: 'message-required' });
+                    }
+                    if (!await hasConversation(runtime, context.scopeId, conversationId)) {
+                        return conversationNotFound();
+                    }
+                    const result = asObject(await runtime.synthesizeVoice({
+                        scopeId: context.scopeId,
+                        conversationId,
+                        messageId,
+                    }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        result: Object.freeze({
+                            message: cloneMessage(result.message),
+                            durationMs: Math.max(0, Math.trunc(asNumber(result.durationMs))),
+                            voiceId: asText(result.voiceId, 256),
+                        }),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async releaseVoiceRender(input = {}) {
+                if (typeof runtime.getSnapshot !== 'function') return unavailable('getSnapshot');
+                if (typeof runtime.releaseVoiceRender !== 'function') return unavailable('releaseVoiceRender');
+                try {
+                    const snapshot = asObject(await runtime.getSnapshot());
+                    const context = cloneContext(snapshot.context);
+                    const leaseId = asText(input.leaseId, 256);
+                    if (!context.scopeId) return unavailable('currentScope');
+                    if (!leaseId) return Object.freeze({ ok: false, status: 'invalid', reason: 'voice-render-required' });
+                    const released = await runtime.releaseVoiceRender({ scopeId: context.scopeId, leaseId });
+                    return Object.freeze({ ok: true, status: 'accepted', released: released === true });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async previewVoice(input = {}) {
+                if (typeof runtime.previewVoice !== 'function') return unavailable('previewVoice');
+                try {
+                    const text = typeof input.text === 'string' ? input.text : '';
+                    const voiceId = asText(input.voiceId, 256);
+                    if (!text.trim()) return Object.freeze({ ok: false, status: 'invalid', reason: 'text-required' });
+                    if (!voiceId) return Object.freeze({ ok: false, status: 'invalid', reason: 'voice-required' });
+                    const result = asObject(await runtime.previewVoice({
+                        text,
+                        voiceId,
+                    }));
+                    const render = cloneMediaRender(result);
+                    if (!render.leaseId || !render.url) {
+                        return Object.freeze({ ok: false, status: 'failed', reason: 'voice-preview-failed' });
+                    }
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        render,
+                        voice: Object.freeze({
+                            mimeType: asText(result.mimeType, 64),
+                            byteLength: Math.max(0, Math.trunc(asNumber(result.byteLength))),
+                            durationMs: Math.max(0, Math.trunc(asNumber(result.durationMs))),
+                        }),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async releaseVoicePreview(input = {}) {
+                if (typeof runtime.releaseVoicePreview !== 'function') return unavailable('releaseVoicePreview');
+                try {
+                    const leaseId = asText(input.leaseId, 256);
+                    if (!leaseId) {
+                        return Object.freeze({ ok: false, status: 'invalid', reason: 'voice-preview-required' });
+                    }
+                    const released = await runtime.releaseVoicePreview({ leaseId });
+                    return Object.freeze({ ok: true, status: 'accepted', released: released === true });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async updateVoiceSettings(input = {}) {
+                if (typeof runtime.updateVoiceSettings !== 'function') return unavailable('updateVoiceSettings');
+                try {
+                    const settings = await runtime.updateVoiceSettings({ settings: asObject(input.settings) });
+                    return Object.freeze({ ok: true, status: 'accepted', settings: cloneVoiceSettings(settings) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async saveVoicePreset(input = {}) {
+                if (typeof runtime.saveVoicePreset !== 'function') return unavailable('saveVoicePreset');
+                try {
+                    return Object.freeze({ ok: true, status: 'accepted',
+                        ...cloneVoicePresetState(await runtime.saveVoicePreset({ preset: asObject(input.preset) })) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async selectVoicePreset(input = {}) {
+                if (typeof runtime.selectVoicePreset !== 'function') return unavailable('selectVoicePreset');
+                try {
+                    return Object.freeze({ ok: true, status: 'accepted',
+                        ...cloneVoicePresetState(await runtime.selectVoicePreset({ presetId: asText(input.presetId, 256) })) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async deleteVoicePreset(input = {}) {
+                if (typeof runtime.deleteVoicePreset !== 'function') return unavailable('deleteVoicePreset');
+                try {
+                    return Object.freeze({ ok: true, status: 'accepted',
+                        ...cloneVoicePresetState(await runtime.deleteVoicePreset({ presetId: asText(input.presetId, 256) })) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async loadVoiceModels(input = {}) {
+                if (typeof runtime.loadVoiceModels !== 'function') return unavailable('loadVoiceModels');
+                try {
+                    const result = await runtime.loadVoiceModels({ draft: asObject(input.draft), signal: input.signal });
+                    return Object.freeze({ ok: true, status: 'ready',
+                        models: Object.freeze(asArray(result.models).map(model => asText(model, 120))),
+                        source: asText(result.source, 32) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async saveVoiceEntry(input = {}) {
+                if (typeof runtime.saveVoiceEntry !== 'function') return unavailable('saveVoiceEntry');
+                try {
+                    const entry = await runtime.saveVoiceEntry({ entry: asObject(input.entry) });
+                    return Object.freeze({ ok: true, status: 'accepted', entry: cloneVoiceEntry(entry) });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async deleteVoiceEntry(input = {}) {
+                if (typeof runtime.deleteVoiceEntry !== 'function') return unavailable('deleteVoiceEntry');
+                try {
+                    const entryId = asText(input.entryId, 256);
+                    if (!entryId) return Object.freeze({ ok: false, status: 'invalid', reason: 'entry-required' });
+                    const deleted = await runtime.deleteVoiceEntry({ entryId });
+                    return Object.freeze({ ok: true, status: 'accepted', deleted: deleted === true });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async importVoicePack(input = {}) {
+                if (typeof runtime.importVoicePack !== 'function') return unavailable('importVoicePack');
+                try {
+                    const result = asObject(await runtime.importVoicePack({
+                        source: input.source,
+                        apiKey: typeof input.apiKey === 'string' ? input.apiKey : '',
+                        applySettings: input.applySettings !== false,
+                        applyLibrary: input.applyLibrary !== false,
+                    }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        result: cloneVoiceImportResult(result),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            /** FISH 配置只转入连接与仓库。 */
+            async importFishVoiceSettings(input = {}) {
+                if (typeof runtime.importFishVoiceSettings !== 'function') return unavailable('importFishVoiceSettings');
+                try {
+                    const result = asObject(await runtime.importFishVoiceSettings({
+                        includeApiKey: input.includeApiKey === true,
+                        applySettings: input.applySettings !== false,
+                        applyLibrary: input.applyLibrary !== false,
+                    }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        result: cloneVoiceImportResult(result),
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async setVoiceApiKey(input = {}) {
+                if (typeof runtime.setVoiceApiKey !== 'function') return unavailable('setVoiceApiKey');
+                try {
+                    const result = asObject(await runtime.setVoiceApiKey({
+                        apiKey: typeof input.apiKey === 'string' ? input.apiKey : '',
+                    }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        hasApiKey: result.hasApiKey === true,
+                    });
+                } catch (error) {
+                    return failed(error);
+                }
+            },
+            async updatePersonVoice(input = {}) {
+                if (typeof runtime.getSnapshot !== 'function') return unavailable('getSnapshot');
+                if (typeof runtime.updatePersonVoice !== 'function') return unavailable('updatePersonVoice');
+                try {
+                    const snapshot = asObject(await runtime.getSnapshot());
+                    const context = cloneContext(snapshot.context);
+                    const personId = asText(input.personId, 256);
+                    if (!context.scopeId) return unavailable('currentScope');
+                    if (!personId) return Object.freeze({ ok: false, status: 'invalid', reason: 'person-required' });
+                    const result = asObject(await runtime.updatePersonVoice({
+                        scopeId: context.scopeId,
+                        personId,
+                        voiceId: asText(input.voiceId, 256),
+                    }));
+                    return Object.freeze({
+                        ok: true,
+                        status: 'accepted',
+                        person: clonePerson(result.person),
                     });
                 } catch (error) {
                     return failed(error);

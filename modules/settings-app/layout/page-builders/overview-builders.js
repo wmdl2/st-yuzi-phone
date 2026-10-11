@@ -17,6 +17,7 @@ export function buildSettingsHomePageHtml({
         'worldbook_reading',
         'image_generation',
         'api_presets',
+        'tts',
         'ai_instruction_presets',
         'table_content_replacement',
         'fullscreen_overlay',

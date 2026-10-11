@@ -17,7 +17,12 @@ function bounded(text, limit) {
     return text.length > limit ? t`${text.slice(0, limit)}\n[已截断]` : text;
 }
 
-function explain(error, stage) {
+function explain(error, stage, kind) {
+    if (kind === 'tts') return {
+        title: stage === 'save' ? t("语音保存失败") : t("语音合成失败"),
+        explanation: t("本次语音没有完成，具体原因见技术详情。"),
+        suggestion: t("检查 TTS 地址、密钥、模型和音色 ID 后，再点原语音条或重新试听。"),
+    };
     const code = String(error?.code || '');
     if (error?.failureKind === 'empty' || code === 'empty_response') return {
         title: t("空回"),
@@ -81,15 +86,17 @@ export function createQQFailureLog() {
         clear,
         begin(input = {}) { return { ...input, revision, stage: 'config' }; },
         record(attempt, error) {
-            if (!attempt || attempt.recorded || !scopeId || attempt.scopeId !== scopeId || attempt.revision !== revision
+            if (!attempt || attempt.recorded || (!scopeId && attempt.kind !== 'tts')
+                || attempt.scopeId !== scopeId || attempt.revision !== revision
                 || attempt.stage === 'completed' || error?.name === 'AbortError'
-                || ['scope_inactive', 'request_cancelled'].includes(error?.code)) return;
+                || ['scope_inactive', 'request_cancelled', 'voice_aborted'].includes(error?.code)) return;
             const clean = (value, limit) => bounded(redactFailureText(value, [attempt.apiKey]), limit);
-            const info = explain(error, attempt.stage);
+            const info = explain(error, attempt.stage, attempt.kind);
             const entry = Object.freeze({
                 id: ++serial,
                 time: formatPhoneDateTime(Date.now()),
                 source: attempt.source || t("QQ · 主动消息"),
+                kind: attempt.kind || 'qq',
                 conversation: clean(attempt.conversation || '', 240),
                 model: clean(attempt.model || '', 240),
                 response: clean(attempt.response || '', QQ_FAILURE_LOG_LIMITS.response),

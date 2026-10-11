@@ -4404,6 +4404,61 @@
     white-space: pre-wrap;
 }
 
+.yuzi-qq-voice-play {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--yuzi-qq-private-voice-summary-gap);
+    inline-size: 100%;
+    padding: 0;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    background: transparent;
+    cursor: pointer;
+}
+
+.yuzi-qq-voice-play:disabled {
+    cursor: default;
+    opacity: var(--yuzi-qq-disabled-opacity);
+}
+
+.yuzi-qq-voice-transcript-toggle {
+    align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--yuzi-qq-private-voice-action-gap);
+    padding: 0;
+    border: 0;
+    color: var(--yuzi-qq-muted);
+    font: inherit;
+    background: transparent;
+    cursor: pointer;
+}
+
+.yuzi-qq-voice-message.is-expanded .yuzi-qq-voice-transcript-icon {
+    transform: rotate(180deg);
+}
+
+.yuzi-qq-voice-spinner {
+    display: inline-block;
+    inline-size: 1em;
+    block-size: 1em;
+    border: var(--yuzi-qq-focus-ring-width) solid color-mix(in srgb, currentColor 24%, transparent);
+    border-block-start-color: currentColor;
+    border-radius: var(--yuzi-qq-radius-full);
+    animation: yuzi-qq-image-generation-spin calc(var(--yuzi-phone-home-app-enter-duration) * 2.5) linear infinite;
+}
+
+.yuzi-qq-voice-transcript-icon {
+    font-size: var(--yuzi-qq-private-voice-transcript-size);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .yuzi-qq-voice-spinner { animation: none; }
+}
+
 .yuzi-qq-narrative-card,
 .yuzi-qq-transfer-card {
     display: grid;

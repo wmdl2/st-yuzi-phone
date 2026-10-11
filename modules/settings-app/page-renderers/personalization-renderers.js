@@ -1,5 +1,6 @@
 import { createInputShortcutsPage } from '../pages/input-shortcuts.js';
 import { createLogsPage } from '../pages/logs.js';
+import { createTtsPage } from '../pages/tts.js';
 import { createAppearancePage, renderAppearancePage as renderAppearancePagePage } from '../pages/appearance.js';
 import { createButtonStylePage, renderButtonStylePage as renderButtonStylePagePage } from '../pages/button-style.js';
 import { createHomePage, renderHomePage as renderHomePagePage } from '../pages/home.js';
@@ -86,6 +87,9 @@ export function createPersonalizationPageRenderers(rendererScope = {}) {
                 createPage() {
                     return createAppearancePage(appearanceContext);
                 },
+            },
+            tts: {
+                createPage() { return createTtsPage(homeContext); },
             },
             button_style: {
                 createPage() {

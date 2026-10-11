@@ -1,3 +1,6 @@
+import { createVoicePlaybackController } from '../voice/playback.js';
+import { pickQQVoice } from '../voice/picker.js';
+import { parseQQVoiceText } from '../voice/emotion-tags.js';
 import { mountQQSkin } from '../../content-presets/qq-skin.js';
 import { decorateQQAvatar, decorateQQBubble } from './appearance.js';
 import { t } from '../../i18n/index.js';
@@ -66,6 +69,7 @@ import {
 import { downloadJsonPack, pickJsonPackFile } from './json-pack-actions.js';
 import { normalizeQQV2TagName, parseQQV2TagInput } from '../domain/story-context-tags.js';
 import { messageTextColorCssValue } from '../domain/message-text-color.js';
+import { summarizeQQVoiceMessage } from '../voice/service.js';
 
 const TABS = Object.freeze([
     ['messages', '消息'],
@@ -355,7 +359,7 @@ function messagePreview(message) {
         transfer: t("[转账]"),
         sticker: t("[表情]"),
     };
-    return labels[message.type] || asText(message.content);
+    return labels[message.type] || parseQQVoiceText(message.content).displayText;
 }
 
 function messageContent(message) {
@@ -659,14 +663,95 @@ function createImageGenerationTaskController({
     });
 }
 
+/**
+ * 单条语音的合成任务控制器：同一个 messageId 只跑一次，成功后就地替换消息，
+ * 失败时保留原气泡并让调用方提示错误。
+ */
+function createVoiceSynthesisTaskController({
+    tasks = new Map(),
+    request,
+    readPage = () => EMPTY_PAGE,
+    writePage = () => {},
+    render = async () => {},
+    notifyFailure = () => {},
+    isConversationVisible = () => true,
+    reportError = () => {},
+} = {}) {
+    if (typeof request !== 'function') {
+        throw new TypeError('Voice synthesis task controller needs a request function');
+    }
+
+    const renderCurrentMessages = async () => {
+        try {
+            await render({ refreshMessages: false });
+        } catch (error) {
+            reportError(error);
+        }
+    };
+
+    const synthesize = async ({ conversationId, messageId } = {}) => {
+        const normalizedConversationId = asText(conversationId);
+        const normalizedMessageId = asText(messageId);
+        if (!normalizedConversationId || !normalizedMessageId) {
+            return Object.freeze({ ok: false, status: 'invalid' });
+        }
+        if (tasks.has(normalizedMessageId)) {
+            return Object.freeze({ ok: false, status: 'busy' });
+        }
+
+        tasks.set(normalizedMessageId, Object.freeze({ conversationId: normalizedConversationId }));
+        let result = Object.freeze({ ok: false, status: 'failed' });
+        let failed = false;
+        try {
+            await renderCurrentMessages();
+            result = await request({
+                conversationId: normalizedConversationId,
+                messageId: normalizedMessageId,
+            });
+            const replacement = asObject(result?.result).message;
+            if (result?.ok !== true || asText(replacement?.messageId) !== normalizedMessageId) {
+                failed = true;
+            } else {
+                writePage(
+                    normalizedConversationId,
+                    replaceMessageInPage(readPage(normalizedConversationId), replacement),
+                );
+            }
+        } catch (error) {
+            failed = true;
+            result = Object.freeze({ ok: false, status: 'failed', error });
+        } finally {
+            tasks.delete(normalizedMessageId);
+            if (failed && isConversationVisible(normalizedConversationId)
+                && !['scope_inactive', 'request_cancelled', 'voice_aborted'].includes(result?.error?.code)) {
+                try {
+                    notifyFailure();
+                } catch {
+                    // 通知失败不能阻断加载态清理。
+                }
+            }
+            if (isConversationVisible(normalizedConversationId)) {
+                await renderCurrentMessages();
+            }
+        }
+        return result;
+    };
+
+    return Object.freeze({
+        synthesize,
+        isLoading: (messageId) => tasks.has(asText(messageId)),
+        clear: () => tasks.clear(),
+    });
+}
+
 function isNearMessageBottom({ scrollTop = 0, clientHeight = 0, scrollHeight = 0, threshold = 32 } = {}) {
     return Number(scrollHeight) - (Number(scrollTop) + Number(clientHeight)) <= Number(threshold);
 }
-
 function isVisibleConversation(conversation) {
     if (conversation?.kind === 'group') return conversation.hiddenFromMessages !== true;
     return conversation?.kind === 'private' && conversation.status !== 'contact';
 }
+
 
 export function formatUnreadBadge(count) {
     const safeCount = Number.isFinite(Number(count)) ? Math.max(0, Math.trunc(Number(count))) : 0;
@@ -1019,6 +1104,8 @@ export function createQQApp({
     const selectedImageAssetIds = new Set();
     const selectedStickerIds = new Set();
     const imageGenerationTasks = new Map();
+    const voiceSynthesisTasks = new Map();
+    let voiceBindings = new Map();
     let imageLibrarySelectionMode = false;
     let imageLibraryLazyLoading = null;
     const enqueueSettingsSave = createSettingsSaveQueue();
@@ -1295,7 +1382,7 @@ export function createQQApp({
             meta.append(time);
         }
         const content = createElement('span', 'yuzi-qq-quote-card-content');
-        content.textContent = quotePreviewText(quote);
+        content.textContent = parseQQVoiceText(quotePreviewText(quote)).displayText;
         copy.append(meta, content);
         card.append(copy);
         if (typeof onClose === 'function') {
@@ -1429,6 +1516,80 @@ export function createQQApp({
         ),
         reportError: report,
     });
+
+    const voiceSynthesisController = createVoiceSynthesisTaskController({
+        tasks: voiceSynthesisTasks,
+        request: ({ conversationId, messageId }) => facade.intent.synthesizeVoice({ conversationId, messageId }),
+        readPage: (conversationId) => getMessageState(conversationId),
+        writePage: (conversationId, messagePage) => pages.set(conversationId, messagePage),
+        render: (options) => render(options),
+        notifyFailure: () => shell.showToast?.(t("语音合成失败"), true),
+        isConversationVisible: (conversationId) => (
+            !disposed
+            && page?.type === 'chat'
+            && asText(page.conversationId) === conversationId
+        ),
+        reportError: report,
+    });
+
+    const voicePlayback = createVoicePlaybackController({ report });
+    const syncVoiceBubbleStates = () => {
+        const bubbles = viewport?.querySelectorAll?.('.yuzi-qq-voice-message') || [];
+        for (const bubble of bubbles) {
+            const button = bubble.querySelector?.('[data-qq-voice]');
+            const messageId = asText(button?.dataset?.qqVoice);
+            const playing = Boolean(messageId) && voicePlayback.isPlaying(`voice:${messageId}`);
+            bubble.classList.toggle('is-playing', playing);
+            const icon = button?.querySelector?.('.yuzi-qq-voice-icon');
+            if (icon) icon.className = `fa-solid fa-${playing ? 'pause' : 'volume-high'} yuzi-qq-voice-icon`;
+        }
+    };
+    voicePlayback.subscribe(syncVoiceBubbleStates);
+
+    const playVoiceMessage = async (conversationId, messageId) => {
+        const normalizedConversationId = asText(conversationId);
+        const normalizedMessageId = asText(messageId);
+        if (!normalizedConversationId || !normalizedMessageId) return;
+        const scopeKey = currentScopeKey();
+        const isCurrent = () => !disposed && currentScopeKey() === scopeKey
+            && page?.type === 'chat' && asText(page.conversationId) === normalizedConversationId;
+        const key = `voice:${normalizedMessageId}`;
+        if (voicePlayback.isPlaying(key)) {
+            voicePlayback.pause();
+            return;
+        }
+        let message = getMessageState(normalizedConversationId).items
+            .find((item) => asText(item?.messageId) === normalizedMessageId);
+        if (!message) return;
+        let voice = asObject(message.voice);
+        if (!asText(voice.assetId)) {
+            const synthesized = await voiceSynthesisController.synthesize({
+                conversationId: normalizedConversationId,
+                messageId: normalizedMessageId,
+            });
+            if (synthesized?.ok !== true) return;
+            message = asObject(synthesized.result).message;
+            voice = asObject(message.voice);
+        }
+        const assetId = asText(voice.assetId);
+        if (!assetId) return;
+        if (!isCurrent()) return;
+        const renderResult = await facade.query.voiceRender({ assetId });
+        const leaseId = asText(renderResult.render?.leaseId);
+        const release = () => {
+            if (leaseId) void facade.intent.releaseVoiceRender({ leaseId });
+        };
+        if (!isCurrent()) { release(); return; }
+        if (!renderResult?.ok) {
+            shell.showToast?.(t("语音读取失败"), true);
+            return;
+        }
+        await voicePlayback.play({
+            key,
+            url: renderResult.render?.url,
+            release,
+        });
+    };
 
     const selectableMessages = (conversationId) => getMessageState(conversationId).items.filter((message) => (
         asText(message?.messageId)
@@ -1716,12 +1877,14 @@ export function createQQApp({
 
     const go = (next) => {
         closeEmojiPanel();
+        voicePlayback.stop();
         page = { ...next, returnTo: page ? { ...page } : null };
         void render().catch(report);
     };
 
     const back = () => {
         closeEmojiPanel();
+        voicePlayback.stop();
         if (page?.type === 'chat') closeOpenedChat();
         if (page?.type === 'settings' && page.kind === 'image-library') clearImageLibrarySelection();
         page = page?.returnTo || null;
@@ -2026,12 +2189,11 @@ export function createQQApp({
         }
         const actions = createElement('div', 'yuzi-qq-profile-actions yuzi-qq-profile-action-bar yuzi-qq-profile-footer-actions');
         actions.setAttribute('data-phone-bottom-bar', '');
-        if (groupMemberManagementActions(conversation.group, person.personId).length > 0) {
-            actions.append(createButton(t("编辑资料"), 'yuzi-qq-primary-button yuzi-qq-profile-action', {
-                'data-qq-group-member-edit': person.personId,
-                'data-qq-group-conversation': conversation.conversationId,
-            }));
-        }
+        // 编辑页同时承担群成员音色绑定，所以不再只对有管理动作的成员开放。
+        actions.append(createButton(t("编辑资料"), 'yuzi-qq-primary-button yuzi-qq-profile-action', {
+            'data-qq-group-member-edit': person.personId,
+            'data-qq-group-conversation': conversation.conversationId,
+        }));
         const role = groupRoleLabel(conversation.group, person.personId);
         return renderProfileSurface({
             token,
@@ -2120,6 +2282,7 @@ export function createQQApp({
                 signature: profile.signature,
                 gender: profile.gender,
                 birthday: profile.birthday,
+                voiceId: profile.voiceId,
             },
             backgroundAssetId: asText(profile.profileBackgroundAssetId),
             actions,
@@ -2132,6 +2295,7 @@ export function createQQApp({
         signature: Object.freeze({ label: t("签名"), maxLength: 1000 }),
         gender: Object.freeze({ label: t("性别"), maxLength: 120 }),
         birthday: Object.freeze({ label: t("生日"), maxLength: 120 }),
+        voiceId: Object.freeze({ label: t("音色 ID"), maxLength: 256 }),
     });
 
     const PROFILE_ASSET_META = Object.freeze({
@@ -2207,6 +2371,45 @@ export function createQQApp({
         return row;
     };
 
+    const profileVoiceRow = ({ value = '', owner, conversationId = '', characterId = '', token }) => {
+        const row = createButton('', 'phone-ios-row is-tappable yuzi-qq-profile-editor-row yuzi-qq-profile-voice-row');
+        const label = createElement('span', 'phone-ios-row-label');
+        label.textContent = t("角色音色");
+        const selected = createElement('span', 'phone-ios-row-value');
+        selected.textContent = t("未配置");
+        const describe = async () => {
+            const library = await facade.query.voiceLibrary();
+            if (isActive(token)) selected.textContent = library.entries?.find(entry => entry.voiceId === value)?.name || t("未配置");
+        };
+        void describe().catch(report);
+        row.append(label, selected, createIcon('chevron-right', 'phone-ios-row-chevron'));
+        row.addEventListener('click', () => {
+            void pickQQVoice({
+                facade, value, runtime: layerRuntime, isCurrent: () => isActive(token),
+                onSelect: async (voiceId) => {
+                    if (!isActive(token)) return;
+                    row.disabled = true;
+                    try {
+                        const result = owner === 'assistant'
+                            ? await facade.intent.saveAssistantCharacter({ characterId, patch: { voiceId } })
+                            : owner === 'current'
+                                ? await facade.intent.updateCurrentProfile({ profile: { voiceId } })
+                                : await facade.intent.updatePrivateProfile({ conversationId, profile: { voiceId } });
+                        if (!result.ok) throw new Error(t("保存失败"));
+                        value = voiceId;
+                        await describe();
+                    } catch (error) {
+                        shell.showToast?.(t("保存失败"), true);
+                        report(error);
+                    } finally {
+                        row.disabled = false;
+                    }
+                },
+            }).catch(report);
+        });
+        return row;
+    };
+
     const profileMessageTextColorRow = ({ value, owner, conversationId = '', characterId = '' }) => {
         const row = createElement('div', 'phone-ios-row yuzi-qq-profile-editor-row');
         const labelNode = createElement('span', 'phone-ios-row-label yuzi-qq-field-label');
@@ -2272,6 +2475,7 @@ export function createQQApp({
                 owner,
                 conversationId,
             }),
+            profileVoiceRow({ value: profile.voiceId, owner, conversationId, token }),
         ]);
         addGroup(t("资料"), [
             profileEditRow({ field: 'formalName', value: displayName, owner, conversationId, readonly: current }),
@@ -2519,19 +2723,43 @@ export function createQQApp({
             stack.append(renderQuoteCard(message.quote, { className: 'yuzi-qq-message-quote' }));
         }
         let body;
-        if (message.type === 'voice') {
-            body = createElement('button', 'yuzi-qq-voice-message');
-            body.type = 'button';
-            body.dataset.qqVoice = message.messageId;
-            body.setAttribute('aria-expanded', 'false');
+        if (message.type === 'voice' && (message.voice?.assetId || voiceBindings.get(message.senderId))) {
+            const summarized = summarizeQQVoiceMessage(message.content, message.voice);
+            const loading = voiceSynthesisController.isLoading(message.messageId);
+            const playing = voicePlayback.isPlaying(`voice:${asText(message.messageId)}`);
+            body = createElement('div', [
+                'yuzi-qq-voice-message',
+                summarized.hasAudio ? 'has-audio' : 'is-placeholder',
+                loading ? 'is-loading' : '',
+                playing ? 'is-playing' : '',
+            ].filter(Boolean).join(' '));
+            const playButton = createElement('button', 'yuzi-qq-voice-play');
+            playButton.type = 'button';
+            playButton.dataset.qqVoice = message.messageId;
+            playButton.disabled = loading;
+            playButton.setAttribute(
+                'aria-label',
+                summarized.hasAudio ? t("播放语音") : t("生成语音"),
+            );
             const summary = createElement('span', 'yuzi-qq-voice-summary');
-            summary.append(createIcon('volume-high', 'yuzi-qq-voice-icon'));
+            summary.append(loading
+                ? createElement('span', 'yuzi-qq-voice-spinner')
+                : createIcon(playing ? 'pause' : 'volume-high', 'yuzi-qq-voice-icon'));
             const duration = createElement('strong', 'yuzi-qq-voice-duration');
-            duration.textContent = `${voiceDurationSeconds(message.content)}″`;
+            duration.textContent = summarized.durationSeconds > 0
+                ? `${summarized.durationSeconds}″`
+                : `${voiceDurationSeconds(summarized.displayText)}″`;
             summary.append(duration);
+            playButton.append(summary);
+            const transcriptToggle = createElement('button', 'yuzi-qq-voice-transcript-toggle');
+            transcriptToggle.type = 'button';
+            transcriptToggle.dataset.qqVoiceTranscript = message.messageId;
+            transcriptToggle.setAttribute('aria-expanded', 'false');
+            transcriptToggle.setAttribute('aria-label', t("查看语音原文"));
+            transcriptToggle.append(createIcon('chevron-down', 'yuzi-qq-voice-transcript-icon'));
             const original = createElement('span', 'yuzi-qq-voice-original');
-            original.textContent = message.content;
-            body.append(summary, original);
+            original.textContent = summarized.displayText;
+            body.append(playButton, transcriptToggle, original);
         } else if (message.type === 'image') {
             const imagePath = normalizeGeneratedImagePath(message.generatedImagePath);
             const loading = imageGenerationController.isLoading(message.messageId);
@@ -2634,7 +2862,7 @@ export function createQQApp({
             body = stickerImage(message.stickerId, message.content || t("[表情]"), 'yuzi-qq-sticker-message yuzi-qq-sticker-image');
         } else {
             body = createElement('span', 'yuzi-qq-message-bubble yuzi-qq-private-message-bubble');
-            body.textContent = message.content;
+            body.textContent = parseQQVoiceText(message.content).displayText;
         }
         if (message.type === 'text' || message.type === 'voice') {
             applyPersonalBubble(body, sender.bubbleAssetId, sender.messageTextColor);
@@ -4263,6 +4491,9 @@ export function createQQApp({
         } : null);
         if (nextScrollSnapshot) viewScrollState.restore(nextScrollSnapshot, { token, isCurrent: isActive });
         try {
+            const bindings = await facade.query.voiceBindings?.();
+            if (isActive(token)) voiceBindings = new Map(asArray(bindings?.bindings)
+                .map(binding => [binding.personId, binding.effectiveVoiceId]));
             const content = await renderPage(token);
             if (!isActive(token) || !viewport) {
                 await Promise.all([
@@ -5465,6 +5696,8 @@ export function createQQApp({
         await render();
     };
 
+    const layerRuntime = Object.freeze({ isDisposed: () => disposed === true });
+
     const persistSettings = async (form, field = '') => {
         const kind = form.dataset.qqSettingsForm;
         const value = (name) => form.elements[name]?.value ?? '';
@@ -5614,7 +5847,7 @@ export function createQQApp({
     const assistantUI = createAssistantUI({ facade, createElement, createButton, avatar, showDialog, clearOverlay,
         openChat, render, makeSecondaryPage,
         profileEditor: {
-            fieldRow: profileEditRow, assetRow: profileAssetRow, messageColorRow: profileMessageTextColorRow,
+            fieldRow: profileEditRow, assetRow: profileAssetRow, messageColorRow: profileMessageTextColorRow, voiceRow: profileVoiceRow,
             addGroup: appendProfileEditorGroup,
             bindControls: (root, token) => bindSettingsGroupedControls(root, null, () => isActive(token)),
         },
@@ -5798,8 +6031,14 @@ export function createQQApp({
         if (target.dataset.qqMessage) return openMessageMenu(page?.conversationId, target.dataset.qqMessage);
         if (target.dataset.qqTransfer) return openTransferAction(page?.conversationId, target.dataset.qqTransfer);
         if (target.dataset.qqVoice) {
-            const expanded = target.classList.toggle('is-expanded');
+            await playVoiceMessage(page?.conversationId, target.dataset.qqVoice);
+            return;
+        }
+        if (target.dataset.qqVoiceTranscript) {
+            const bubble = target.closest?.('.yuzi-qq-voice-message');
+            const expanded = bubble?.classList.toggle('is-expanded') === true;
             target.setAttribute('aria-expanded', String(expanded));
+            return;
         }
     };
 
@@ -5875,6 +6114,7 @@ export function createQQApp({
         },
         refresh: () => render(),
         suspend() {
+            voicePlayback.stop();
             renderEpoch += 1;
             const pendingMessages = pages.invalidate();
             composerAutoHeight.cancel();
@@ -5902,6 +6142,8 @@ export function createQQApp({
             messageSelection.clearAll();
             messageSelectionConversationId = '';
             imageGenerationController.clear();
+            voiceSynthesisController.clear();
+            voicePlayback.stop();
             pages.clear();
             conversationSnapshots.clear();
             viewSnapshotCache.clear();
@@ -5920,6 +6162,8 @@ export function createQQApp({
             messageSelection.clearAll();
             messageSelectionConversationId = '';
             imageGenerationController.clear();
+            voiceSynthesisController.clear();
+            voicePlayback.stop();
             disposeImageLibraryLazyLoading();
             viewSnapshotCache.clear();
             conversationSnapshots.clear();

@@ -335,3 +335,22 @@ Figma 原始底栏顺序不直接复用。生产 QQ 固定为 消息、联系人
 设置首页“发送键”开关使用 `--yuzi-qq-send-switch-width`（44px）、`--yuzi-qq-send-switch-height`（26px）、`--yuzi-qq-send-switch-padding`（3px）、`--yuzi-qq-send-switch-thumb`（20px）和 `--yuzi-qq-send-switch-duration`（150ms）。开关未选中消费 `--yuzi-qq-muted`，选中消费 `--yuzi-qq-accent`，滑块消费 `--yuzi-qq-on-accent`；减少动态效果时停用滑动过渡。
 
 输入框的纸飞机与终止键互斥显示，共用 `--yuzi-qq-private-stop-size`、`--yuzi-qq-private-stop-icon-size` 和 `--yuzi-qq-radius-8`，不增加第二个按钮位置。纸飞机使用 `--yuzi-qq-accent`，终止键仍使用 `--yuzi-qq-danger`，禁用状态消费 `--yuzi-qq-disabled-opacity`。
+
+### QQ 语音气泡与主设置 TTS
+
+语音气泡是「播放按钮 + 原文折叠按钮 + 原文」三件套，外层仍使用 `.yuzi-qq-voice-message`（气泡底、圆角、内边距沿用 `.yuzi-qq-message-bubble` 同组声明），最小宽度消费 `--yuzi-qq-private-voice-min-width`，摘要行间距消费 `--yuzi-qq-private-voice-summary-gap`。
+
+| selector | 作用 | 消费 token |
+| --- | --- | --- |
+| `.yuzi-qq-voice-play` | 整行播放/生成按钮，透明底、继承气泡文字色 | `--yuzi-qq-private-voice-summary-gap`、`--yuzi-qq-disabled-opacity` |
+| `.yuzi-qq-voice-spinner` | 首次合成时替代喇叭的转圈，不附加“生成中”文案 | `--yuzi-qq-focus-ring-width`、`--yuzi-qq-radius-full`、`--yuzi-phone-home-app-enter-duration` |
+| `.yuzi-qq-voice-transcript-toggle` / `.yuzi-qq-voice-transcript-icon` | 展开原文的箭头入口 | `--yuzi-qq-private-voice-action-gap`、`--yuzi-qq-private-voice-transcript-size`、`--yuzi-qq-muted` |
+| `.yuzi-qq-profile-voice-row` | 联系人、陪聊、“我”的角色音色选择行 | 复用 `.phone-ios-row`、值槽和箭头，无独立 token |
+
+展开态挂在气泡外层的 `.is-expanded`（沿用既有 `.yuzi-qq-voice-original` 规则），播放态与生成态分别是 `.is-playing` 与 `.is-loading`。加载转圈复用既有旋转 keyframes，低动态下停止装饰旋转；加载时播放按钮禁用，失败后原条可重试，不另设重试按钮。已知声音标记在普通文字、回退文字和展开原文中隐藏，不渲染标签 chip。
+
+主设置的 TTS 二级页按连接预设、预设编辑、音色仓库、仓库导入导出、试听排列，复用 `buildSettingsPageFrame()`、`.phone-ios-group`、`.phone-ios-field`、`.phone-ios-mini-btn`，不在 QQ 内保留另一套语音设置。预设选择、新建、加载模型、保存与删除复用 API 预设的 `.phone-ios-row.is-action`、选择行与 `showSettingsOptionSheet()`；删除预设使用现有确认框，不另设清除密钥入口。模型列表和预设选择弹层带 `.phone-settings-page`，加载状态复用分组 footer；模型加载与选择仅局部更新已有按钮、状态和列表行，不重建页面、不让整页切换禁用配色，不先清空旧列表。加载失败保留原列表与手写值，成功后更新列表；选择只填入手写模型栏，保存后生效。其他同页重绘统一接 `createScrollPreserver().createRerenderWithScroll()`，保存和仓库操作保留滚动位置；首次进入仍从页顶显示。
+仓库列表只显示名称，名称／ID／分类／备注在编辑弹层填写；分类复用 `.phone-ios-seg`。音色编辑弹层带 `.phone-settings-page`，复用设置页已有的输入框主题隔离、聚焦与禁用态，不另配表单颜色。导入导出只包含音色仓库，不携带连接配置、预设或密钥；返回按钮回到设置首页。试听要求先保存预设，只显示短状态，技术错误留给现有日志。
+连接区的“前端直连”复用 `.phone-ios-switch`，开关随预设保存，试听读取当前已保存预设；关闭时走酒馆转发。新连接默认关闭，旧配置尊重已保存的选择，不照搬默认值覆盖。
+
+三处人物编辑页的「角色音色」都紧接消息字色，复用 `.phone-ios-row` + `.phone-ios-row-label` + `.phone-ios-row-value` + `.phone-ios-row-chevron`。右侧只显示所选名称或「未配置」，公共 `showSettingsOptionSheet()` 从仓库选择，带 `.yuzi-qq-settings-layer` 复用 QQ 弹层配色，不提供人物页手填入口。仓库编辑和操作走 `showSettingsSheet()` / `showSettingsActionSheet()`，不增加平行弹层或颜色尺寸系统。

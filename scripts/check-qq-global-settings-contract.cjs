@@ -84,6 +84,13 @@ async function testGlobalRuntimeStorage() {
             keywords: ['Legacy', 'dawn'],
         },
         proactive: { enabled: true, everyTurns: 4, privateWeight: 50 },
+        voice: {
+            baseUrl: 'https://api.fish.audio/v1',
+            model: 's2.1-pro-free',
+            directFetch: false,
+            apiKeySaved: false,
+            timeoutMs: 120000,
+        },
     }, 'the first shared read migrates the current scope without losing selections or explicit zeroes');
     const migratedFromOtherScope = await runtimeSettings.get('scope-b');
     assert.equal(migratedFromOtherScope.activeApiPresetId, 'legacy-api',
@@ -203,6 +210,13 @@ async function testExistingSharedRuntimeMigration() {
             keywords: ['scope-b'],
         },
         proactive: { enabled: false, everyTurns: 8, privateWeight: 50 },
+        voice: {
+            baseUrl: 'https://api.fish.audio/v1',
+            model: 's2.1-pro-free',
+            directFetch: false,
+            apiKeySaved: false,
+            timeoutMs: 120000,
+        },
     }, 'missing fields in an existing shared record migrate from the current scope and legacy enabled key');
     assert.equal(migrated.worldbook.bookName, undefined);
     assert.deepEqual(await runtimeSettings.get('scope-a'), migrated,

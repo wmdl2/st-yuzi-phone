@@ -49,6 +49,21 @@ import {
 } from '../../image-generation/prompt-translation-service.js';
 import { sillyTavernWorldbookReadingCatalog } from '../../worldbook-reading/st-catalog-adapter.js';
 import { sillyTavernWorldbookReadingRuntimes } from '../../worldbook-reading/st-runtime-adapter.js';
+import { synthesizeQQVoice } from '../voice/fish-client.js';
+import { loadQQVoiceModels } from '../voice/models.js';
+import {
+    QQ_VOICE_SETTINGS_DEFAULTS,
+    normalizeQQVoiceSettings,
+} from '../voice/settings.js';
+import {
+    measureQQVoiceDurationMs,
+    prepareQQVoiceText,
+    resolveQQVoiceId,
+} from '../voice/service.js';
+import {
+    normalizeQQVoiceLibrary,
+    parseQQVoiceImportSource,
+} from '../voice/library.js';
 
 const SELF_ID = '__self__';
 const DEFAULT_WORLDBOOK_INJECTION_COUNT = 30;
@@ -105,6 +120,15 @@ function safeRead(callback, fallback) {
     }
 }
 
+async function safeReadAsync(callback, fallback) {
+    try {
+        const value = await callback();
+        return value === undefined || value === null ? fallback : value;
+    } catch {
+        return fallback;
+    }
+}
+
 function resolveObjectUrlApi(value) {
     const api = value ?? globalThis.URL;
     return api
@@ -127,6 +151,12 @@ function conversationDeletingError() {
 }
 
 function imageGenerationError(message, code = 'image_generation_failed') {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+
+function voiceSynthesisError(message, code = 'voice_synthesis_failed') {
     const error = new Error(message);
     error.code = code;
     return error;
@@ -155,6 +185,7 @@ function defaultGlobalSettings() {
             keywords: [],
         },
         proactive: { enabled: false, everyTurns: 5, privateWeight: 50 },
+        voice: { ...QQ_VOICE_SETTINGS_DEFAULTS },
     };
 }
 
@@ -205,6 +236,10 @@ function cloneGlobalSettings(settings) {
                 ? Number(source.proactive.privateWeight)
                 : defaults.proactive.privateWeight,
         },
+        voice: normalizeQQVoiceSettings({
+            ...defaults.voice,
+            ...(source.voice && typeof source.voice === 'object' ? source.voice : {}),
+        }),
     };
 }
 
@@ -228,6 +263,7 @@ function runtimeSettingsPatch(settings) {
     if (hasOwn(source, 'hostContextExcludeTags')) {
         patch.hostContextExcludeTags = source.hostContextExcludeTags;
     }
+    if (hasOwn(source, 'voice')) patch.voice = asObject(source.voice);
     return patch;
 }
 
@@ -430,6 +466,45 @@ export function createQQV2ProductionRuntime(options = {}) {
     const getImageGenerationConfig = typeof options.getImageGenerationConfig === 'function'
         ? options.getImageGenerationConfig
         : () => ({});
+    const getVoiceConfig = typeof options.getVoiceConfig === 'function'
+        ? options.getVoiceConfig
+        : null;
+    const synthesizeVoiceAudio = typeof options.synthesizeVoiceAudio === 'function'
+        ? options.synthesizeVoiceAudio
+        : synthesizeQQVoice;
+    const measureVoiceDuration = typeof options.measureVoiceDuration === 'function'
+        ? options.measureVoiceDuration
+        : measureQQVoiceDurationMs;
+    const readVoiceApiKey = typeof resources.getVoiceApiKey === 'function'
+        ? () => resources.getVoiceApiKey()
+        : async () => '';
+    const writeVoiceApiKey = typeof resources.setVoiceApiKey === 'function'
+        ? (apiKey) => resources.setVoiceApiKey(apiKey)
+        : async () => false;
+    const initializeVoicePresets = async () => {
+        if (typeof resources.initializeVoicePresets !== 'function') return;
+        const settings = await globalRuntimeSettings.get();
+        await resources.initializeVoicePresets(
+            getVoiceConfig ? safeRead(getVoiceConfig, {}) : settings.voice,
+        );
+    };
+    const readVoiceConnection = async () => {
+        await initializeVoicePresets();
+        const connection = await resources.getVoiceConnection?.();
+        if (connection) return connection;
+        const settings = await globalRuntimeSettings.get();
+        return {
+            settings: normalizeQQVoiceSettings(getVoiceConfig ? safeRead(getVoiceConfig, {}) : settings.voice),
+            apiKey: asText(await safeReadAsync(readVoiceApiKey, ''), 8192),
+        };
+    };
+    const publishVoicePresets = async () => {
+        const connection = await readVoiceConnection();
+        // 保留现有共享设置快照的读取方式；实际请求从预设一次性读取配置和对应密钥。
+        await globalRuntimeSettings.update('', { voice: connection.settings });
+        await notifySubscribers(currentScopeId());
+        return resources.listVoicePresets();
+    };
     const promptTranslationService = options.promptTranslationService
         || createImagePromptTranslationService({
             backend,
@@ -521,6 +596,9 @@ export function createQQV2ProductionRuntime(options = {}) {
     const stickerRenderLeases = new Map();
     let mediaRenderLeaseCount = 0;
     let stickerRenderLeaseCount = 0;
+    let voiceRenderLeaseCount = 0;
+    let voicePreviewLeaseCount = 0;
+    const previewRenderLeases = new Map();
     // This is deliberately runtime-only. A conversation is "open" only while
     // its QQ page is visible in the current browser session, never a persisted
     // property of the conversation itself.
@@ -733,6 +811,34 @@ export function createQQV2ProductionRuntime(options = {}) {
         return `media-render-${mediaRenderLeaseCount}`;
     };
 
+    const nextVoiceRenderLeaseId = () => {
+        const generated = asText(safeRead(() => options.cryptoApi?.randomUUID?.(), ''), 128);
+        if (generated) return `voice-render-${generated}`;
+        voiceRenderLeaseCount += 1;
+        return `voice-render-${voiceRenderLeaseCount}`;
+    };
+
+    const nextVoicePreviewLeaseId = () => {
+        const generated = asText(safeRead(() => options.cryptoApi?.randomUUID?.(), ''), 128);
+        if (generated) return `voice-preview-${generated}`;
+        voicePreviewLeaseCount += 1;
+        return `voice-preview-${voicePreviewLeaseCount}`;
+    };
+
+    const revokeAllPreviewRenderLeases = () => {
+        let revoked = 0;
+        for (const [leaseId, lease] of previewRenderLeases) {
+            previewRenderLeases.delete(leaseId);
+            try {
+                objectUrlApi?.revokeObjectURL(lease.url);
+                revoked += 1;
+            } catch {
+                // 释放失败不影响统计。
+            }
+        }
+        return revoked;
+    };
+
     const revokeMediaRenderLease = (leaseId) => {
         const lease = mediaRenderLeases.get(leaseId);
         if (!lease) return false;
@@ -792,9 +898,14 @@ export function createQQV2ProductionRuntime(options = {}) {
         const normalizedScopeId = asText(scopeId, 512);
         if (!normalizedScopeId) return 0;
         const scopeLeases = [...mediaRenderLeases.values()].filter((lease) => lease.scopeId === normalizedScopeId);
-        const existingAssetIds = new Set((await Promise.all(scopeLeases.map(async (lease) => (
-            await repository.getMediaAsset(normalizedScopeId, lease.assetId) ? lease.assetId : ''
-        )))).filter(Boolean));
+        const existingAssetIds = new Set((await Promise.all(scopeLeases.map(async (lease) => {
+            // Voice audio lives in its own scope table, so the same sweep has to
+            // ask both readers before it releases a URL.
+            const asset = lease.kind === 'voice'
+                ? await repository.getVoiceAsset(normalizedScopeId, lease.assetId)
+                : await repository.getMediaAsset(normalizedScopeId, lease.assetId);
+            return asset ? lease.assetId : '';
+        }))).filter(Boolean));
         return revokeMediaRenderLeases((lease) => (
             lease.scopeId === normalizedScopeId && !existingAssetIds.has(lease.assetId)
         ));
@@ -814,6 +925,8 @@ export function createQQV2ProductionRuntime(options = {}) {
             const scope = state.scopes?.[normalizedScopeId];
             if (!scope) throw new Error('QQ scope disappeared while saving settings');
             scope.settings = { ...defaultGlobalSettings(), ...asObject(scope.settings) };
+            // 语音设置只保存在共享设置里；这里顺手清掉旧版本写进来的快照。
+            delete scope.settings.voice;
             Object.assign(scope.settings, normalizedPatch);
         });
         const settings = cloneGlobalSettings((await repository.getScope(normalizedScopeId))?.settings);
@@ -835,6 +948,43 @@ export function createQQV2ProductionRuntime(options = {}) {
             },
             proactive: asObject(shared.proactive),
         };
+    };
+
+    /** 全局导入连接与仓库；旧 FISH 人物映射只转换为仓库条目，不绑定人物。 */
+    const performVoicePackImport = async (payload = {}) => {
+        const source = payload.source ?? payload.pack?.source ?? payload.pack ?? payload;
+        const parsed = parseQQVoiceImportSource(source);
+        if (!parsed.format) throw voiceSynthesisError(t("无法识别音色配置文件"), 'voice_pack_invalid');
+        const applySettings = payload.applySettings !== false;
+        const applyLibrary = payload.applyLibrary !== false;
+        const result = {
+            format: parsed.format,
+            library: null,
+            roles: null,
+            settings: null,
+            bindings: { applied: 0, skipped: [] },
+            apiKeyImported: false,
+        };
+
+        const importedEntries = normalizeQQVoiceLibrary([
+            ...parsed.entries,
+            ...parsed.bindings.map(binding => ({ name: binding.name, voiceId: binding.voiceId })),
+        ]).entries;
+        if (applyLibrary && importedEntries.length > 0) {
+            result.library = await resources.mergeVoiceEntries(importedEntries);
+        }
+        if (applySettings && Object.keys(parsed.settings).length > 0) {
+            await initializeVoicePresets();
+            await resources.updateVoicePresetSettings?.(parsed.settings);
+            result.settings = (await globalRuntimeSettings.update('', { voice: parsed.settings })).settings;
+        }
+        const apiKey = asText(payload.apiKey || payload.pack?.apiKey, 8192);
+        if (applySettings && apiKey) {
+            await writeVoiceApiKey(apiKey);
+            result.apiKeyImported = true;
+        }
+        await notifySubscribers(currentScopeId());
+        return result;
     };
 
     const updateSharedRuntimeSettings = async (scopeId, patch, { scopeSession = null } = {}) => {
@@ -1503,6 +1653,7 @@ export function createQQV2ProductionRuntime(options = {}) {
             inactiveProjectionScopeIds.clear();
             revokeAllMediaRenderLeases();
             revokeAllStickerRenderLeases();
+            revokeAllPreviewRenderLeases();
             void stateStore.close?.();
         },
     });
@@ -1587,12 +1738,15 @@ export function createQQV2ProductionRuntime(options = {}) {
         const scopeSession = captureScopeSession(scope.scopeId);
         const saved = await repository.getScope(scope.scopeId);
         const runtimeSettings = await resolveRuntimeSettings(scope.scopeId, saved, { scopeSession });
+        // Whether a voice key exists is storage state, never a stored setting.
+        const voiceApiKeySaved = Boolean(asText(await safeReadAsync(readVoiceApiKey, '')));
         return {
             phase: status.phase,
             context: currentContext(host, scope),
             globalSettings: cloneGlobalSettings({
                 ...saved?.settings,
                 ...runtimeSettings,
+                voice: { ...(runtimeSettings?.voice || {}), apiKeySaved: voiceApiKeySaved },
             }),
         };
     };
@@ -1661,6 +1815,7 @@ export function createQQV2ProductionRuntime(options = {}) {
             const result = await imageLibraryPacks.importPack(source);
             revokeAllMediaRenderLeases();
             revokeAllStickerRenderLeases();
+            revokeAllPreviewRenderLeases();
             await notifySubscribers();
             return result;
         },
@@ -2147,6 +2302,13 @@ export function createQQV2ProductionRuntime(options = {}) {
                     ...(hasOwn(proactive, 'privateWeight') ? { privateWeight: proactive.privateWeight } : {}),
                 };
             }
+            // 语音设置跨聊天共享，必须和 proactive 一样走共享设置；写进
+            // scope.settings 会被共享默认值盖掉，表现为开关和地址改不动。
+            if (hasOwn(source, 'voice')) {
+                sharedPatch.voice = asObject(source.voice);
+                // 已经进共享补丁，不能再落进按作用域的标量补丁。
+                delete scalarPatch.voice;
+            }
             if (hasOwn(source, 'worldbook')) {
                 requireWorldbookMutationResult(await runActiveWorldbookMutation(normalizedScopeId, (scopeSession) => projectionService.setGlobalSettings({
                     scopeId: normalizedScopeId,
@@ -2167,7 +2329,12 @@ export function createQQV2ProductionRuntime(options = {}) {
                 resolveRuntimeSettings(normalizedScopeId, null, { scopeSession }),
             ]);
             assertReadyScopeSession(scopeSession);
-            const settingsResult = cloneGlobalSettings({ ...saved?.settings, ...runtimeSettings });
+            const voiceApiKeySaved = Boolean(asText(await safeReadAsync(readVoiceApiKey, '')));
+            const settingsResult = cloneGlobalSettings({
+                ...saved?.settings,
+                ...runtimeSettings,
+                voice: { ...(runtimeSettings?.voice || {}), apiKeySaved: voiceApiKeySaved },
+            });
             await notifySubscribers(normalizedScopeId);
             return settingsResult;
         },
@@ -2427,6 +2594,361 @@ export function createQQV2ProductionRuntime(options = {}) {
                 if (generatedPath && !committed) await deleteStoredImage(generatedPath);
                 throw error;
             }
+        },
+        /**
+         * Turn one voice message into playable audio. Nothing is generated until
+         * the user asks for it, and the blob only becomes part of the scope once
+         * synthesis and duration probing both succeed.
+         */
+        async synthesizeVoice({ scopeId, conversationId, messageId }) {
+            const attempt = failureLog.begin({ scopeId, source: t("TTS · 语音消息"), kind: 'tts' });
+            try {
+                const scopeSession = captureReadyScopeSession(scopeId);
+                const normalizedScopeId = await ensureScope(scopeId, null, { scopeSession });
+                const normalizedConversationId = asText(conversationId, 256);
+                const normalizedMessageId = asText(messageId, 256);
+                assertConversationWritable(normalizedScopeId, normalizedConversationId);
+                const conversation = await getConversation(normalizedScopeId, normalizedConversationId);
+                if (!conversation) throw voiceSynthesisError('QQ 会话不存在', 'conversation_not_found');
+                const messages = await repository.listMessages(normalizedScopeId, normalizedConversationId);
+                const message = messages.find((item) => item.messageId === normalizedMessageId);
+                if (!message) throw voiceSynthesisError('QQ 消息不存在', 'message_not_found');
+                if (message.type !== 'voice') {
+                    throw voiceSynthesisError('只有语音消息可以生成语音', 'message_type_invalid');
+                }
+
+                const savedScope = await repository.getScope(normalizedScopeId);
+                const connection = await readVoiceConnection();
+                const settings = normalizeQQVoiceSettings(connection.settings);
+                attempt.model = settings.model;
+                if (message.voice?.assetId) {
+                    return { message, durationMs: message.voice.durationMs, voiceId: message.voice.voiceId };
+                }
+                const isSelf = message.senderId === SELF_ID;
+                const scope = savedScope;
+                const person = isSelf ? null : await repository.getPerson(normalizedScopeId, message.senderId);
+                const voiceId = resolveQQVoiceId({
+                    personVoiceId: isSelf ? scope?.selfProfile?.voiceId : person?.voiceId,
+                });
+                const library = await resources.listVoiceEntries();
+                if (!voiceId || !library.some(entry => entry.voiceId === voiceId)) {
+                    throw voiceSynthesisError(
+                        isSelf
+                            ? t("当前用户资料里还没有绑定音色 ID")
+                            : t("该联系人尚未配置角色音色"),
+                        'voice_id_missing',
+                    );
+                }
+                const prepared = prepareQQVoiceText(message.content);
+                assertReadyScopeSession(scopeSession);
+
+                const apiKey = asText(connection.apiKey, 8192);
+                attempt.apiKey = apiKey;
+                if (!apiKey) throw voiceSynthesisError(t("尚未保存语音 API Key"), 'voice_api_key_missing');
+
+                attempt.stage = 'request';
+                const synthesized = await synthesizeVoiceAudio({
+                    text: prepared.text,
+                    voiceId,
+                    apiKey,
+                    baseUrl: settings.baseUrl,
+                    model: settings.model,
+                    directFetch: settings.directFetch,
+                    timeoutMs: settings.timeoutMs,
+                    signal: scopeSession.signal,
+                });
+                assertReadyScopeSession(scopeSession);
+                const durationMs = await measureVoiceDuration(synthesized.blob).catch(() => 0);
+                assertReadyScopeSession(scopeSession);
+                attempt.stage = 'save';
+                const result = await repository.saveMessageVoice(
+                    normalizedScopeId,
+                    normalizedConversationId,
+                    normalizedMessageId,
+                    {
+                        blob: synthesized.blob,
+                        mimeType: synthesized.mimeType,
+                        size: synthesized.byteLength,
+                        durationMs,
+                        voiceId,
+                        model: settings.model,
+                        generatedAt: Math.trunc(Number(now()) || Date.now()),
+                    },
+                    { scopeSession },
+                );
+                await notifySubscribers(normalizedScopeId, {
+                    reason: 'message-voice-synthesized',
+                    conversationId: normalizedConversationId,
+                });
+                attempt.stage = 'completed';
+                return { ...result, durationMs, voiceId, tags: prepared.tags };
+            } catch (error) {
+                failureLog.record(attempt, error);
+                throw error;
+            }
+        },
+        async acquireVoiceRender({ scopeId, assetId }) {
+            const normalizedScopeId = asText(scopeId, 512);
+            const normalizedAssetId = asText(assetId, 256);
+            if (!normalizedScopeId || !normalizedAssetId) return null;
+            const record = await queryExistingScope(normalizedScopeId, null, (currentScopeId) => (
+                repository.getVoiceAsset(currentScopeId, normalizedAssetId)
+            ));
+            if (!record?.blob) return null;
+            if (!objectUrlApi) {
+                const error = new Error(t("QQ 语音渲染地址在当前运行环境不可用"));
+                error.code = 'voice_render_unavailable';
+                throw error;
+            }
+            let url;
+            try {
+                url = objectUrlApi.createObjectURL(record.blob);
+            } catch (cause) {
+                const error = new Error(t("QQ 语音渲染地址创建失败"));
+                error.code = 'voice_render_unavailable';
+                error.cause = cause;
+                throw error;
+            }
+            const leaseId = nextVoiceRenderLeaseId();
+            mediaRenderLeases.set(leaseId, {
+                scopeId: normalizedScopeId,
+                assetId: normalizedAssetId,
+                kind: 'voice',
+                url,
+            });
+            return {
+                assetId: normalizedAssetId,
+                conversationId: asText(record.asset?.conversationId, 256),
+                kind: 'voice',
+                mimeType: asText(record.asset?.mimeType, 64),
+                size: Math.max(0, Number(record.asset?.size) || 0),
+                durationMs: Math.max(0, Number(record.asset?.durationMs) || 0),
+                leaseId,
+                url,
+            };
+        },
+        async releaseVoiceRender({ scopeId, leaseId }) {
+            const normalizedScopeId = asText(scopeId, 512);
+            const normalizedLeaseId = asText(leaseId, 256);
+            const lease = mediaRenderLeases.get(normalizedLeaseId);
+            if (!lease || lease.scopeId !== normalizedScopeId || lease.kind !== 'voice') return false;
+            return revokeMediaRenderLease(normalizedLeaseId);
+        },
+        async getVoiceSettings() {
+            const connection = await readVoiceConnection();
+            return {
+                ...normalizeQQVoiceSettings(connection.settings),
+                apiKeySaved: Boolean(asText(connection.apiKey)),
+            };
+        },
+        async updateVoiceSettings({ settings } = {}) {
+            await initializeVoicePresets();
+            await resources.updateVoicePresetSettings?.(asObject(settings));
+            const saved = await globalRuntimeSettings.update('', { voice: asObject(settings) });
+            await notifySubscribers(currentScopeId());
+            return {
+                ...normalizeQQVoiceSettings(saved.settings.voice),
+                apiKeySaved: Boolean(asText(await safeReadAsync(readVoiceApiKey, ''))),
+            };
+        },
+        async setVoiceApiKey({ apiKey } = {}) {
+            const value = asText(apiKey, 8192);
+            await writeVoiceApiKey(value);
+            return { hasApiKey: Boolean(asText(await safeReadAsync(readVoiceApiKey, ''))) };
+        },
+        async getVoicePresets() {
+            await initializeVoicePresets();
+            return resources.listVoicePresets();
+        },
+        async saveVoicePreset({ preset } = {}) {
+            await initializeVoicePresets();
+            await resources.saveVoicePreset(asObject(preset));
+            return publishVoicePresets();
+        },
+        async selectVoicePreset({ presetId } = {}) {
+            await initializeVoicePresets();
+            await resources.selectVoicePreset(asText(presetId, 256));
+            return publishVoicePresets();
+        },
+        async deleteVoicePreset({ presetId } = {}) {
+            await initializeVoicePresets();
+            await resources.deleteVoicePreset(asText(presetId, 256));
+            return publishVoicePresets();
+        },
+        async loadVoiceModels({ draft, signal } = {}) {
+            await initializeVoicePresets();
+            const input = asObject(draft);
+            const connection = await resources.getVoiceConnection?.(asText(input.presetId, 256));
+            return loadQQVoiceModels({
+                baseUrl: input.baseUrl,
+                directFetch: input.directFetch === true,
+                apiKey: asText(input.apiKey, 8192) || connection?.apiKey || '',
+                fetchImpl: options.fetchImpl,
+                signal,
+            });
+        },
+        /** 设置页试听：只合成并返回一次性播放地址，不写进任何聊天数据。 */
+        async previewVoice({ text, voiceId } = {}) {
+            const attempt = failureLog.begin({ scopeId: currentScopeId(), source: t("TTS · 试听"), kind: 'tts' });
+            try {
+                const connection = await readVoiceConnection();
+                const settings = normalizeQQVoiceSettings(connection.settings);
+                attempt.model = settings.model;
+                const apiKey = asText(connection.apiKey, 8192);
+                attempt.apiKey = apiKey;
+                if (!apiKey) throw voiceSynthesisError(t("尚未保存语音 API Key"), 'voice_api_key_missing');
+                const resolvedVoiceId = asText(voiceId, 256);
+                if (!resolvedVoiceId) throw voiceSynthesisError(t("请先填写音色 ID"), 'voice_id_missing');
+                if (!objectUrlApi) {
+                    const error = new Error(t("QQ 语音渲染地址在当前运行环境不可用"));
+                    error.code = 'voice_render_unavailable';
+                    throw error;
+                }
+                const prepared = prepareQQVoiceText(text);
+                attempt.stage = 'request';
+                const synthesized = await synthesizeVoiceAudio({
+                    text: prepared.text,
+                    voiceId: resolvedVoiceId,
+                    apiKey,
+                    baseUrl: settings.baseUrl,
+                    model: settings.model,
+                    directFetch: settings.directFetch,
+                    timeoutMs: settings.timeoutMs,
+                });
+                const durationMs = await measureVoiceDuration(synthesized.blob).catch(() => 0);
+                const leaseId = nextVoicePreviewLeaseId();
+                previewRenderLeases.set(leaseId, { url: '' });
+                try {
+                    const url = objectUrlApi.createObjectURL(synthesized.blob);
+                    previewRenderLeases.set(leaseId, { url });
+                    attempt.stage = 'completed';
+                    return {
+                        leaseId,
+                        url,
+                        durationMs,
+                        mimeType: synthesized.mimeType,
+                        byteLength: synthesized.byteLength,
+                    };
+                } catch (cause) {
+                    previewRenderLeases.delete(leaseId);
+                    const error = new Error(t("QQ 语音渲染地址创建失败"));
+                    error.code = 'voice_render_unavailable';
+                    error.cause = cause;
+                    throw error;
+                }
+            } catch (error) {
+                failureLog.record(attempt, error);
+                throw error;
+            }
+        },
+        async releaseVoicePreview({ leaseId } = {}) {
+            const normalizedLeaseId = asText(leaseId, 256);
+            const lease = previewRenderLeases.get(normalizedLeaseId);
+            if (!lease) return false;
+            previewRenderLeases.delete(normalizedLeaseId);
+            try {
+                objectUrlApi?.revokeObjectURL(lease.url);
+            } catch {
+                // 释放失败不影响调用方。
+            }
+            return true;
+        },
+        async updatePersonVoice({ scopeId, personId, voiceId }) {
+            const scopeSession = captureReadyScopeSession(scopeId);
+            const normalizedScopeId = await ensureScope(scopeId, null, { scopeSession });
+            const result = await repository.updatePersonVoice(
+                normalizedScopeId,
+                personId,
+                voiceId,
+                { scopeSession },
+            );
+            await notifySubscribers(normalizedScopeId);
+            return result;
+        },
+        listVoiceLibrary: () => resources.listVoiceEntries(),
+        /** 当前聊天的声音选择；只有仍在仓库中的音色 ID 生效。 */
+        async listVoiceBindings({ scopeId } = {}) {
+            const scope = await repository.getScope(asText(scopeId, 512));
+            const library = await resources.listVoiceEntries();
+            const describe = (personId, name, localVoiceId, extra = {}) => {
+                const local = asText(localVoiceId, 256);
+                const effectiveVoiceId = library.some(entry => entry.voiceId === local) ? local : '';
+                return {
+                    personId: asText(personId, 256),
+                    name: asText(name, 120),
+                    voiceId: local,
+                    effectiveVoiceId,
+                    ...extra,
+                };
+            };
+            const selfName = asText(currentContext(host, null)?.user?.name, 120);
+            return {
+                bindings: [
+                    describe(SELF_ID, selfName, scope?.selfProfile?.voiceId, { isSelf: true }),
+                    ...Object.values(asObject(scope?.people)).map((person) => describe(
+                        person?.personId,
+                        person?.formalName,
+                        person?.voiceId,
+                        { isAssistant: Boolean(person?.assistantCharacterId) },
+                    )),
+                ].filter((binding) => binding.name),
+            };
+        },
+        async saveVoiceEntry({ entry } = {}) {
+            const previous = (await resources.listVoiceEntries()).find(item => item.entryId === entry?.entryId);
+            const saved = await resources.saveVoiceEntry(asObject(entry));
+            try {
+                if (previous) await repository.replaceVoiceBindings(previous.voiceId, saved.voiceId);
+            } catch (error) {
+                await resources.saveVoiceEntry(previous);
+                throw error;
+            }
+            await notifySubscribers(currentScopeId());
+            return saved;
+        },
+        async deleteVoiceEntry({ entryId } = {}) {
+            const previous = (await resources.listVoiceEntries()).find(item => item.entryId === entryId);
+            if (!previous) return false;
+            const deleted = await resources.deleteVoiceEntry(entryId);
+            try {
+                if (deleted) await repository.replaceVoiceBindings(previous.voiceId);
+            } catch (error) {
+                await resources.mergeVoiceEntries([previous]);
+                throw error;
+            }
+            await notifySubscribers(currentScopeId());
+            return deleted;
+        },
+        /** 只读预览 FISH 侧能导入什么，绝不把 API Key 交给 UI。 */
+        async readFishVoicePack() {
+            const context = safeRead(() => host.readRawContext?.(), null);
+            const fish = asObject(context?.extensionSettings?.fish_dialogue_v1);
+            const pack = parseQQVoiceImportSource(fish);
+            const available = Boolean(fish && Object.keys(fish).length > 0);
+            return {
+                available,
+                format: pack.format,
+                libraryCount: pack.entries.length,
+                bindingCount: pack.bindings.length,
+                settings: pack.settings,
+                hasApiKey: Boolean(asText(fish.savedApiKey, 8192)),
+            };
+        },
+        /** 只导入连接与仓库，不自动配置人物声音。 */
+        importVoicePack: (payload = {}) => performVoicePackImport(payload),
+        /** 直接读取本机 FISH 扩展设置完成导入；API Key 由运行时自己取，不过 facade。 */
+        async importFishVoiceSettings({ applySettings = true, applyLibrary = true, includeApiKey = false } = {}) {
+            const context = safeRead(() => host.readRawContext?.(), null);
+            const fish = asObject(context?.extensionSettings?.fish_dialogue_v1);
+            if (!fish || Object.keys(fish).length === 0) {
+                throw voiceSynthesisError(t("没有找到 FISH 对话音声的设置"), 'voice_pack_unavailable');
+            }
+            return performVoicePackImport({
+                source: fish,
+                apiKey: includeApiKey ? asText(fish.savedApiKey, 8192) : '',
+                applySettings,
+                applyLibrary,
+            });
         },
         async retryManual({ scopeId, conversationId }) {
             assertConversationWritable(scopeId, conversationId);
