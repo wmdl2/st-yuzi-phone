@@ -10,8 +10,8 @@ Yuzi Phone 是 SillyTavern 第三方扩展，提供一个“小手机”样式�
 
 - **扩展版**：通过 SillyTavern 第三方扩展目录安装，由 [`manifest.json`](../manifest.json:6) 加载 `dist/yuzi-phone.bundle.js` 与 `dist/yuzi-phone.bundle.css`，更新依赖 SillyTavern 扩展 `auto_update` 机制。
 - **酒馆助手脚本版**：通过 JS-Slash-Runner/酒馆助手脚本注入远程 `dist/yuzi-phone.bundle.js` 与 `dist/yuzi-phone.bundle.css` 到父页面运行。它不是 SillyTavern 扩展管理器中的已安装扩展，但会执行同一套打包产物，因此会挂载同样的小手机 UI、设置面板与运行时逻辑。
-  - 脚本版通过 GitHub API (`/repos/yuzi83/st-yuzi-phone/tags`) 运行时发现最新 git tag，再从 jsDelivr CDN 加载对应 tag 的 `dist/` 产物。jsDelivr 对 tag 引用的缓存是不可变的，因此同一 tag 下 CSS 与 JS 版本始终一致。
-  - 发版流程：改代码 → `npm run build` → commit → push main → `git tag <tagName>`（如 `y1`、`y2`...递增即可，不要求语义化版本号）→ `git push origin <tagName>`。扩展版用户通过 SillyTavern auto_update 拉取 main；脚本版用户刷新页面后自动发现最新 tag 并加载对应产物。
+  - 脚本版通过 GitHub API (`/repos/yuzi52/st-yuzi-phone/tags`) 运行时直接使用标签列表第一项，不解析标签前缀或编号，再从 jsDelivr CDN 加载对应 tag 的 `dist/` 产物；API 失败或列表为空时回退到当前已发布的 `y67`。jsDelivr 对 tag 引用的缓存是不可变的，因此同一 tag 下 CSS 与 JS 版本始终一致。
+  - 发版流程：改代码 → `npm run build` → commit → push main → `git tag <tagName>` → `git push origin <tagName>`。脚本版使用 GitHub API 返回的第一项标签；若标签列表顺序不符合预期，应先确认新 tag 在列表中的位置。扩展版用户通过 SillyTavern auto_update 拉取 main；脚本版用户刷新页面后加载所选 tag 的产物。
 - 两种形态共享同一源码与同一 `dist` 产物；修改源码后必须重新构建并推送 `dist/`，脚本版用户刷新页面后才可能获得新版本。扩展版与脚本版不要同时启用，否则会重复初始化 UI、Slash 命令、设置面板和运行时状态。
 
 当前加载互斥事实：
@@ -19,7 +19,7 @@ Yuzi Phone 是 SillyTavern 第三方扩展，提供一个“小手机”样式�
 - 扩展入口通过 [`window.__YUZI_PHONE_INSTANCE__`](../index.js:60) 注册全局 singleton guard，记录 `version`、`source`、`status`、`ownerToken` / `instanceId`、`destroy` 与 `getInitStatus`。已有活跃实例或旧 DOM 痕迹时，入口会阻止重复初始化并提示用户不要同时启用扩展版和脚本版。
 - guard 只允许当前 `ownerToken` 清理自己的记录；初始化成功后状态更新为 `initialized`，销毁或初始化失败时不得误删其他实例。
 - 脚本版 loader 在请求 GitHub tags 前与 append CSS/JS 前都会复检重复加载，检查 `yuzi-phone-root`、`yuzi-phone-standalone`、`yuzi-phone-toggle`、`yuzi-phone-settings`、`yuzi-phone-css`、`yuzi-phone-js` 等旧痕迹；检测到冲突时只提示并停止注入，不自动 destroy 旧实例。
-- [`scripts/check-script-loader-contract.cjs`](../scripts/check-script-loader-contract.cjs:1) 守护 loader JSON、fallback tag、dist JS/CSS 路径、注入 id、singleton key、旧痕迹互斥与 fetch/append 顺序；[`scripts/check-extension-version-contract.cjs`](../scripts/check-extension-version-contract.cjs:1) 同步守护 manifest、index、package、package-lock、style 与 loader fallback 版本一致。
+- [`scripts/check-script-loader-contract.cjs`](../scripts/check-script-loader-contract.cjs:1) 守护 loader JSON、tag 选择与 fallback、dist JS/CSS 路径、注入 id、singleton key、旧痕迹互斥与 fetch/append 顺序；[`scripts/check-extension-version-contract.cjs`](../scripts/check-extension-version-contract.cjs:1) 同步守护 manifest、index、package、package-lock 与 style 的扩展版本一致。
 
 已确认入口：
 

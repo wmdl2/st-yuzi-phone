@@ -4,7 +4,6 @@ const path = require('path');
 const ROOT = process.cwd();
 const FILES = {
     loader: '酒馆助手脚本-玉子手机.json',
-    manifest: 'manifest.json',
 };
 
 function read(relativePath) {
@@ -25,11 +24,9 @@ function ordered(...indexes) {
 
 function main() {
     const results = [];
-    let manifest;
     let loaderJson;
 
     try {
-        manifest = JSON.parse(read(FILES.manifest));
         loaderJson = JSON.parse(read(FILES.loader));
         check(results, FILES.loader, 'loader JSON 可解析', true);
     } catch (error) {
@@ -40,10 +37,9 @@ function main() {
 
     const rawLoader = loaderJson.content;
     const loader = typeof rawLoader === 'string' ? rawLoader : '';
-    const manifestVersion = manifest.version;
-    const fallbackTag = `v${manifestVersion}`;
+    const fallbackTag = 'y67';
     check(results, FILES.loader, 'loader content 是非空字符串', typeof rawLoader === 'string' && rawLoader.trim().length > 0);
-    check(results, FILES.loader, 'fallback tag 使用 vX.Y.Z 模式', /^v\d+\.\d+\.\d+$/.test(fallbackTag), fallbackTag);
+    check(results, FILES.loader, 'fallback tag 指向当前已发布的 y 标签', /^y\d+$/.test(fallbackTag), fallbackTag);
 
     try {
         new Function('window', 'document', 'fetch', `return (async()=>{${loader}\n})();`);
@@ -53,10 +49,10 @@ function main() {
     }
 
     const requiredSnippets = [
-        ['读取 GitHub tags API', "fetch('https://api.github.com/repos/yuzi83/st-yuzi-phone/tags')"],
-        ['tags API 空结果回退到 manifest tag', `return tags[0]?.name || '${fallbackTag}';`],
-        ['tags API 异常回退到 manifest tag', `return '${fallbackTag}';`],
-        ['jsDelivr base 使用动态 version tag', 'https://gcore.jsdelivr.net/gh/yuzi83/st-yuzi-phone@${version}'],
+        ['读取新仓库 GitHub tags API', "fetch('https://api.github.com/repos/yuzi52/st-yuzi-phone/tags?per_page=100')"],
+        ['直接使用 tags API 第一项，不依赖 tag 命名规则', `return tags[0]?.name || '${fallbackTag}';`],
+        ['tags API 异常回退到当前已发布 tag', `return '${fallbackTag}';`],
+        ['jsDelivr base 使用新仓库和动态 version tag', 'https://gcore.jsdelivr.net/gh/yuzi52/st-yuzi-phone@${version}'],
         ['注入 dist CSS bundle', 'dist/yuzi-phone.bundle.css'],
         ['注入 dist JS bundle', 'dist/yuzi-phone.bundle.js'],
         ['CSS 注入 id 稳定', "link.id = 'yuzi-phone-css';"],
@@ -65,12 +61,13 @@ function main() {
         ['重复加载统一走阻断原因', 'function getDuplicateLoadBlockReason()'],
     ];
     requiredSnippets.forEach(([description, snippet]) => check(results, FILES.loader, description, loader.includes(snippet), snippet));
+    check(results, FILES.loader, '不筛选或排序 tag 名称', !loader.includes('.filter(') && !loader.includes('.sort('));
 
     ['yuzi-phone-root', 'yuzi-phone-standalone', 'yuzi-phone-toggle', 'yuzi-phone-settings', 'yuzi-phone-css', 'yuzi-phone-js']
         .forEach(id => check(results, FILES.loader, `旧痕互斥检测包含 ${id}`, loader.includes(`'${id}'`)));
 
     const initial = positionOf(loader, 'const initialBlockReason = getDuplicateLoadBlockReason();');
-    const fetchCall = positionOf(loader, "fetch('https://api.github.com/repos/yuzi83/st-yuzi-phone/tags')");
+    const fetchCall = positionOf(loader, "fetch('https://api.github.com/repos/yuzi52/st-yuzi-phone/tags?per_page=100')");
     const postFetch = positionOf(loader, 'const postFetchBlockReason = getDuplicateLoadBlockReason();');
     const appendLink = positionOf(loader, 'appendChild(link)');
     const appendScript = positionOf(loader, 'appendChild(script)');

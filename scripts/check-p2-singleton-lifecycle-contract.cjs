@@ -24,7 +24,7 @@ function main(){
   check(out,'loader','检测 singleton key',loader.includes("const INSTANCE_KEY = '__YUZI_PHONE_INSTANCE__';"));
   for(const id of ['yuzi-phone-root','yuzi-phone-standalone','yuzi-phone-toggle','yuzi-phone-settings','yuzi-phone-css','yuzi-phone-js'])check(out,'loader',`检测 ${id}`,loader.includes(id));
   const first=pos(loader,'const initialBlockReason = getDuplicateLoadBlockReason();');
-  const fetchCall=pos(loader,"fetch('https://api.github.com/repos/yuzi83/st-yuzi-phone/tags')");
+  const fetchCall=pos(loader,"fetch('https://api.github.com/repos/yuzi52/st-yuzi-phone/tags?per_page=100')");
   const second=pos(loader,'const postFetchBlockReason = getDuplicateLoadBlockReason();');
   const appendLink=pos(loader,'appendChild(link)');
   const appendScript=pos(loader,'appendChild(script)');

@@ -123,7 +123,7 @@ npm run build
 
 1. 打开 SillyTavern
 2. 进入“扩展” → “安装扩展”
-3. 输入仓库地址：`https://github.com/yuzi83/st-yuzi-phone`
+3. 输入仓库地址：`https://github.com/yuzi52/st-yuzi-phone`
 4. 安装后重启 SillyTavern
 
 ### 手动安装

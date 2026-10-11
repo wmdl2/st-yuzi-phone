@@ -102,9 +102,10 @@ try {
     if (typeof loaderContent !== 'string' || !loaderContent.trim()) {
         fail('[`酒馆助手脚本-玉子手机.json`](酒馆助手脚本-玉子手机.json) 的 content 缺失或不是非空字符串');
     }
-    const expectedFallbackTag = `v${manifestVersion}`;
-    if (!loaderContent.includes(`return tags[0]?.name || '${expectedFallbackTag}';`) || !loaderContent.includes(`return '${expectedFallbackTag}';`)) {
-        fail(`脚本版 loader fallback tag 必须与 manifest 版本一致，期望 ${expectedFallbackTag}`);
+    const successFallback = loaderContent.match(/return tags\[0\]\?\.name \|\| '([^']+)';/);
+    const errorFallback = loaderContent.match(/}\s*catch\s*\{\s*return '([^']+)';/);
+    if (!successFallback || !errorFallback || successFallback[1] !== errorFallback[1]) {
+        fail('脚本版 loader 在 tags API 空结果和异常时必须使用同一个 fallback tag');
     }
 
     const staleLiteralPattern = /1\.2\.2/;
