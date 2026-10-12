@@ -1,14 +1,17 @@
 import { normalizeBubbleStyle } from '../resources/appearance-contract.js';
 import { normalizeAvatarFrameTransform } from '../resources/avatar-frame-transform.js';
 
+// The calibration guide spans 80% of its stage; displayed avatars use that guide as their basis.
+const CALIBRATION_GUIDE_RATIO = 0.8;
+
 export function decorateQQAvatar(element, url, frameTransform = null) {
     if (!url || element.classList.contains('yuzi-qq-group-avatar') || element.classList.contains('yuzi-qq-group-avatar-member')) return;
     element.style.setProperty('--yuzi-qq-avatar-frame-image', 'url(' + JSON.stringify(url) + ')');
     if (frameTransform && typeof frameTransform === 'object') {
         const transform = normalizeAvatarFrameTransform(frameTransform);
-        element.style.setProperty('--yuzi-qq-avatar-frame-offset-x', `${transform.x * 100}%`);
-        element.style.setProperty('--yuzi-qq-avatar-frame-offset-y', `${transform.y * 100}%`);
-        element.style.setProperty('--yuzi-qq-avatar-frame-scale', String(transform.scale));
+        element.style.setProperty('--yuzi-qq-avatar-frame-offset-x', `${transform.x / CALIBRATION_GUIDE_RATIO * 100}%`);
+        element.style.setProperty('--yuzi-qq-avatar-frame-offset-y', `${transform.y / CALIBRATION_GUIDE_RATIO * 100}%`);
+        element.style.setProperty('--yuzi-qq-avatar-frame-scale', String(transform.scale / CALIBRATION_GUIDE_RATIO));
     }
     element.setAttribute('data-qq-avatar-frame', '');
 }

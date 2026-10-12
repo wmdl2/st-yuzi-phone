@@ -50,7 +50,6 @@ const appearanceContext = createAppearanceSettingsContext({
         Logger.error('[玉子手机] 外观资源或设置保存失败，原设置已保留:', error);
         showNotification('外观资源保存失败，原设置已保留。请检查浏览器存储空间后重试。', 'error');
     },
-    onMissing: () => showNotification('本浏览器缺少部分外观资源，已显示默认外观。请重新导入美化包；原资源引用仍保留。', 'warning'),
 });
 export const PHONE_SETTINGS_UPDATED_EVENT = 'yuzi-phone-settings-updated';
 

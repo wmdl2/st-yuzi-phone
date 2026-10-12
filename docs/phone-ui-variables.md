@@ -36,6 +36,8 @@
 | 共享裁剪层 | `--yuzi-phone-crop-overlay-padding` / `--yuzi-phone-crop-overlay-hidden-opacity` / `--yuzi-phone-crop-overlay-visible-opacity` / `--yuzi-phone-crop-transition-timing` | `14px` / `0` / `1` / `ease` |
 | 裁剪弹窗尺寸 | `--yuzi-phone-crop-dialog-inline-size` / `--yuzi-phone-crop-dialog-compact-inline-size` / `--yuzi-phone-crop-dialog-max-width` / `--yuzi-phone-crop-dialog-max-height` / `--yuzi-phone-crop-dialog-gutter` | `92%` / `95%` / `380px` / `720px` / `28px` |
 | 裁剪画布与选框 | `--yuzi-phone-crop-stage-min-height` / `--yuzi-phone-crop-stage-compact-min-height` / `--yuzi-phone-crop-image-max-height` / `--yuzi-phone-crop-box-overlay-shadow` | `260px` / `220px` / `320px` / `0 0 0 9999px 当前 QQ 遮罩` |
+| QQ 头像框校准预览 | `--yuzi-qq-frame-calibration-preview-size` / `--yuzi-qq-frame-calibration-stage-size` | `240px` / `62.5%`；内层保留现有校准几何，圆形参考区为外层预览卡片的一半 |
+| QQ 头像框参考圈内阴影 | `--yuzi-qq-frame-calibration-guide-shadow` | `inset 0 2px 10px`，颜色为当前 QQ 遮罩的 `60%`；位于图片上方，仅用于预览 |
 | 裁剪网格与手柄 | `--yuzi-phone-crop-grid-first-line-position` / `--yuzi-phone-crop-grid-second-line-position` / `--yuzi-phone-crop-handle-size` / `--yuzi-phone-crop-handle-compact-size` / `--yuzi-phone-crop-action-z-index` | `33.333%` / `66.666%` / `14px` / `18px` / `2` |
 | 设置首页快捷选择 | `--yuzi-phone-settings-home-quick-select-min-width` / `--yuzi-phone-settings-home-quick-select-max-width` | `84px` / `104px` |
 | 应用导航安全顶边距 | `--yuzi-phone-app-nav-top-padding` | `状态栏安全高度` |
@@ -181,6 +183,14 @@ QQ 当前用户与 NPC 编辑资料页共用 `.yuzi-qq-profile-editor-list`，�
 私聊／群聊设置页 `.yuzi-qq-conversation-settings-view` 复用上述分组骨架，按「资料 / 世界书」排列；私聊仅提供备注，群聊仅提供群名称，不新增群备注。行内文字使用 `.phone-ios-inline-input`，世界书开关、灯色、深度分别使用公共 switch、seg、stepper，禁用态同步隐藏原生控件与可见按钮，关键词仅在本会话绿灯开启时显示。聊天背景复用同一图片菜单和缩略图，图片资料选择／上传／删除分别接当前私聊或群聊的保存接口。群资料卡与成员管理编辑页复用 `.phone-ios-group`；成员网格使用四列 `.phone-ios-icon-grid`，身份角标使用 `.phone-ios-badge`，管理与退出／解散操作使用 `.phone-ios-row.is-action`（危险动作加 `.is-danger`）。添加成员复用 `showSettingsOptionSheet()`，只列出尚未入群的现有 QQ 好友；成员点击后的资料展示页及所有权限规则不变。
 
 `showSettingsActionSheet()` 与 `showSettingsSheet()` 均支持 `className` 以复用 `.yuzi-qq-settings-layer` 配色；`showSettingsSheet()` 的可选 `onClose` 在完成、遮罩、Esc、替换或销毁时统一执行，用于释放选图资源租约。「完成」只关闭选图面板，实际点选成功后才保存；QQ 图片仍按原图保存，不接裁剪流程。
+
+图片资料页的 `.yuzi-qq-image-library-heading` 横向排列标题与 `.yuzi-qq-image-library-section-actions`，后者只在 `.is-selection-mode` 下显示。全选／取消全选按钮使用 `.yuzi-qq-icon-button.yuzi-qq-image-library-section-action`，复用导航控件热区、QQ 字号与强调色 token；操作仅作用于对应分区，不包含上传入口。删除成功就地移除已删缩略图并退出选择态，不重建未删除的图片节点。
+
+`.yuzi-qq-image-library-item` 清除按钮内边距并保持 1:1，图片与 `.yuzi-qq-image-library-sticker` 固定在该方形视口内，原图尺寸不参与网格行高计算；普通图片沿用 `cover`，表情沿用 `contain`。选中描边使用前景伪元素，勾选标记位于其上方，避免铺满图片遮住删除态反馈。
+
+头像框上传的 `.phone-avatar-frame-calibration-overlay` 继续通过公共裁剪临时层居中显示，不使用底部 sheet 或拖动条。`.phone-avatar-frame-calibration-head` 居中放置标题、右侧放单行的「确认上传」文字按钮，字号复用 `--yuzi-settings-alert-message-size`；说明、柔和的方形预览卡片、重置与缩放滑条、居中的取消按钮依次排列。缩放复用 `.phone-ios-slider-row` 与 `.yuzi-qq-settings-range-row` 的原生 range 布局和 QQ 配色，按 `0.001` 的 scale 步长实时更新，重置同步恢复初始位置、大小和滑条值。样式仅作用于 `.phone-avatar-frame-calibration-dialog`，配色沿用 QQ 深浅主题 token；圆形占位位于真实头像框后方，虚线参考圈及其柔和内阴影在上方，不拦截拖动也不写入原图。头像框平移不再要求覆盖头像区域，缩小后仍有宽裕范围；边界以头像与缩放后头像框的半宽之和计算，预览、保存、显示及图片包导入导出共用同一归一化规则，缩放范围、校准数据格式与原图保存逻辑不变。
+
+头像框校准数据以预览内层舞台为基准保存，虚线参考圈为其宽度的 `80%`。共用 `decorateQQAvatar()` 显示有校准数据的素材时，先沿用原归一化规则，再将缩放与两个方向的位移分别除以 `0.8`，换算为真实头像的基准，使列表、聊天、资料和 QQ 通知中的比例与位置和校准预览一致；不回写或迁移原校准数据，不改变图片包格式，没有校准数据的素材保留旧显示方式。
 
 选择面板保留原生 option / optgroup 的禁用状态；步进器保留原生 input 的禁用状态，并在 input / change 后同步数值与边界按钮。分组内容中的 `[hidden]` 始终隐藏，不因公共行布局重新显示；开关默认值只读取已保存配置，不照搬原型示例值。
 

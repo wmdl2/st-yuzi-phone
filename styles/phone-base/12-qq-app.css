@@ -2630,6 +2630,10 @@
 .yuzi-qq-image-library-item {
     position: relative;
     display: grid;
+    inline-size: 100%;
+    min-inline-size: 0;
+    min-block-size: 0;
+    padding: 0;
     overflow: hidden;
     aspect-ratio: 1;
     place-items: center;
@@ -2639,17 +2643,27 @@
 }
 
 .yuzi-qq-image-library-item > img {
+    position: absolute;
+    inset: 0;
+    display: block;
     inline-size: 100%;
     block-size: 100%;
     object-fit: cover;
 }
 
-.yuzi-qq-image-library-item.is-selected {
+.yuzi-qq-image-library-item.is-selected::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
     box-shadow: inset 0 0 0 var(--yuzi-qq-focus-ring-width) var(--yuzi-qq-accent);
+    pointer-events: none;
 }
 
 .yuzi-qq-image-library-tick {
     position: absolute;
+    z-index: 2;
     inset-block-start: var(--yuzi-qq-inline-gap);
     inset-inline-end: var(--yuzi-qq-inline-gap);
     display: grid;
@@ -3127,21 +3141,127 @@
 /* QQ 的头像框校准沿用公共居中裁剪弹窗，但不借用设置页的中性色。 */
 .phone-avatar-frame-calibration-overlay {
     background: var(--yuzi-qq-overlay);
+    font-family: var(--yuzi-phone-font-family);
 }
 
 .phone-avatar-frame-calibration-overlay .phone-image-crop-dialog {
-    border-color: var(--yuzi-qq-line);
-    background: var(--yuzi-qq-dialog-surface);
+    border: 0;
+    background: var(--yuzi-qq-page);
     color: var(--yuzi-qq-text);
     box-shadow: var(--yuzi-qq-shadow-dialog);
 }
 
+.phone-avatar-frame-calibration-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
+    align-items: center;
+    min-block-size: var(--yuzi-phone-nav-control-size);
+    gap: var(--yuzi-qq-inline-gap);
+}
+
 .phone-avatar-frame-calibration-overlay .phone-image-crop-title {
+    grid-column: 2;
     color: var(--yuzi-qq-text);
+    font-weight: var(--yuzi-qq-title-weight);
+    overflow-wrap: anywhere;
 }
 
 .phone-avatar-frame-calibration-overlay .phone-image-crop-desc {
+    padding-inline: var(--yuzi-qq-inline-gap);
     color: var(--yuzi-qq-muted);
+    font-size: var(--yuzi-settings-alert-message-size);
+}
+
+.phone-avatar-frame-calibration-dialog .phone-image-crop-stage-wrap {
+    display: grid;
+    place-items: center;
+    inline-size: min(100%, var(--yuzi-qq-frame-calibration-preview-size));
+    aspect-ratio: 1;
+    margin-inline: auto;
+    padding: 0;
+    overflow: hidden;
+    background: var(--yuzi-qq-content-surface);
+}
+
+.phone-avatar-frame-calibration-dialog .phone-avatar-frame-calibration-stage {
+    width: var(--yuzi-qq-frame-calibration-stage-size);
+    background: transparent;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-avatar-frame-calibration-mask {
+    background: var(--yuzi-qq-control);
+    box-shadow: none;
+    z-index: 0;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-avatar-frame-calibration-image {
+    z-index: 1;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-avatar-frame-calibration-guide {
+    border-style: dashed;
+    border-color: var(--yuzi-qq-accent);
+    box-shadow: var(--yuzi-qq-frame-calibration-guide-shadow);
+}
+
+.phone-avatar-frame-calibration-dialog .phone-image-crop-actions {
+    position: static;
+    flex-direction: column;
+    gap: var(--yuzi-qq-inline-gap);
+    padding-top: 0;
+    background: transparent;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-image-crop-actions-secondary,
+.phone-avatar-frame-calibration-dialog .phone-image-crop-actions-main {
+    justify-content: center;
+    gap: var(--yuzi-qq-inline-gap);
+}
+
+.phone-avatar-frame-calibration-dialog .phone-image-crop-actions-secondary {
+    inline-size: min(100%, var(--yuzi-qq-frame-calibration-preview-size));
+}
+
+.phone-avatar-frame-calibration-dialog .phone-settings-btn {
+    min-block-size: var(--yuzi-phone-nav-control-size);
+    padding: var(--yuzi-settings-seg-item-padding-block) var(--yuzi-qq-inline-gap);
+    border: 0;
+    border-radius: var(--yuzi-phone-radius-pill);
+    background: var(--yuzi-qq-control);
+    color: var(--yuzi-qq-text);
+    font-family: inherit;
+    font-size: var(--yuzi-settings-alert-message-size);
+    font-weight: var(--yuzi-qq-body-weight);
+    line-height: var(--yuzi-qq-body-line-height);
+}
+
+.phone-avatar-frame-calibration-dialog .phone-settings-btn:is(:hover, :active) {
+    background: var(--yuzi-qq-dialog-muted);
+    transform: none;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-settings-btn:focus-visible {
+    outline: var(--yuzi-qq-focus-ring-width) solid var(--yuzi-qq-accent);
+    outline-offset: var(--yuzi-qq-line-width);
+    box-shadow: none;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-settings-btn:disabled {
+    opacity: var(--yuzi-qq-disabled-opacity);
+    cursor: default;
+}
+
+.phone-avatar-frame-calibration-dialog .phone-image-crop-confirm {
+    grid-column: 3;
+    justify-self: end;
+    max-inline-size: 100%;
+    padding-inline: 0;
+    background: transparent;
+    color: var(--yuzi-qq-accent);
+    font-size: var(--yuzi-settings-alert-message-size);
+    font-weight: var(--yuzi-qq-title-weight);
+    text-align: end;
+    white-space: nowrap;
 }
 
 .yuzi-qq-settings-detail-view {
@@ -3634,7 +3754,8 @@
 
 .yuzi-qq-image-library-heading {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: var(--yuzi-qq-inline-gap);
     margin: var(--yuzi-settings-group-block-gap) var(--yuzi-qq-page-padding) var(--yuzi-settings-group-header-gap);
     color: var(--yuzi-qq-muted);
     font-size: var(--yuzi-settings-group-header-size);
@@ -3644,6 +3765,23 @@
 
 .yuzi-qq-image-library-heading::after {
     content: none;
+}
+
+.yuzi-qq-image-library-section-actions {
+    display: none;
+    align-items: center;
+    gap: var(--yuzi-phone-nav-title-gap);
+}
+
+.yuzi-qq-image-library-view.is-selection-mode .yuzi-qq-image-library-section-actions {
+    display: inline-flex;
+}
+
+.yuzi-qq-image-library-section-action {
+    inline-size: var(--yuzi-phone-nav-control-size);
+    block-size: var(--yuzi-phone-nav-control-size);
+    color: var(--yuzi-qq-accent);
+    font-size: var(--yuzi-qq-body-size);
 }
 
 .yuzi-qq-profile-page:not(.yuzi-qq-profile-editor-view) {
@@ -4343,6 +4481,17 @@
     inline-size: 100%;
     block-size: 100%;
     object-fit: contain;
+}
+
+.yuzi-qq-image-library-sticker {
+    position: absolute;
+    inset: 0;
+}
+
+.yuzi-qq-image-library-sticker > img {
+    display: block;
+    min-inline-size: 0;
+    min-block-size: 0;
 }
 
 .yuzi-qq-emoji-upload-item {

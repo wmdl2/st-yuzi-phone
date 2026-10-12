@@ -15,7 +15,7 @@ import {
     pickImageFile,
 } from '../media-upload.js';
 import { showToast } from '../../ui/toast.js';
-import { showConfirmDialog } from '../../ui/confirm-dialog.js';
+import { createScrollPreserver } from '../../ui/settings-scroll-binding.js';
 import { collectAppearanceIconSlots } from './icon-slots.js';
 import {
     buildAppIconAssignment,
@@ -181,7 +181,7 @@ export function createIconUploadService(deps = {}) {
             const nextState = buildAppIconRemoval(getPhoneSettings(), key);
             savePhoneSettingsPatch(nextState);
             cacheRemove(CACHE_STORES.images, `icon:${key}`).catch(() => {});
-            render();
+            renderWithCleanupScroll();
             showToast(listEl, t("图标已清除"));
         };
 
@@ -233,7 +233,7 @@ export function createIconUploadService(deps = {}) {
                         <img src="${escapeHtmlAttr(dataUrl)}" class="phone-ios-thumb" alt="">
                         <span class="phone-ios-row-label">${escapeHtml(label)}<span class="phone-ios-row-sub">${escapeHtml(key)}</span></span>
                         <span class="phone-ios-badge${slot ? ' is-muted' : ' is-danger'}">${slot ? t("当前图标位") : t("隐藏旧图标")}</span>
-                        <button type="button" class="phone-ios-row-del phone-icon-delete-current-btn" aria-haspopup="dialog" aria-label="${escapeHtmlAttr(t`删除 ${label}`)}">${t`删除`}</button>
+                        <button type="button" class="phone-ios-row-del phone-icon-delete-current-btn" aria-label="${escapeHtmlAttr(t`删除 ${label}`)}">${t`删除`}</button>
                     </div>
                 `;
             }).join('') : `<div class="phone-ios-row phone-ios-row-empty">${t("当前没有自定义图标")}</div>`;
@@ -244,7 +244,7 @@ export function createIconUploadService(deps = {}) {
                 </div>
                 <p class="phone-ios-group-footer">${t("点按图标即可上传或恢复默认，右上角圆点表示已自定义。")}</p>
                 <h3 class="phone-ios-group-header">${t`图标清理 · ${escapeHtml(String(allCurrentIconEntries.length))} 个`}</h3>
-                <div class="phone-ios-group is-scrollable">
+                <div class="phone-ios-group is-scrollable phone-icon-cleanup-scroll">
                     <div class="phone-ios-row">
                         <span class="phone-ios-row-label">${t("已用空间")}<span class="phone-ios-usage-bar${usageRatio >= 0.85 ? ' is-high' : ''}" style="--yuzi-settings-usage-ratio:${Math.round(usageRatio * 100)}%" aria-hidden="true"><span></span></span></span>
                         <span class="phone-ios-row-value">${t`${escapeHtml(totalUsageText)} / ${escapeHtml(totalLimitText)}`}</span>
@@ -291,18 +291,17 @@ export function createIconUploadService(deps = {}) {
                     const row = btn.closest('.phone-icon-cleanup-row');
                     const key = row?.dataset?.iconKey;
                     if (!key) return;
-                    showConfirmDialog(
-                        listEl,
-                        t("删除这个图标？"),
-                        t("只移除这张自定义图标，对应 App 恢复默认图标。"),
-                        () => removeIcon(key),
-                        t("删除"),
-                        t("取消"),
-                        runtime,
-                    );
+                    removeIcon(key);
                 });
             });
         };
+
+        const renderWithCleanupScroll = createScrollPreserver(
+            listEl,
+            {},
+            '.phone-icon-cleanup-scroll',
+            runtime,
+        ).createRerenderWithScroll('iconCleanupScrollTop', render);
 
         render();
 

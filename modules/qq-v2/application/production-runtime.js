@@ -1813,10 +1813,8 @@ export function createQQV2ProductionRuntime(options = {}) {
         exportImageLibraryPack: () => imageLibraryPacks.exportPack(),
         async importImageLibraryPack({ source } = {}) {
             const result = await imageLibraryPacks.importPack(source);
-            revokeAllMediaRenderLeases();
-            revokeAllStickerRenderLeases();
-            revokeAllPreviewRenderLeases();
-            await notifySubscribers();
+            // Append-only imports leave existing assets and their mounted render leases valid.
+            await notifySubscribers(currentScopeId(), { reason: 'image-library-pack-imported' });
             return result;
         },
         async exportContactPack({ scopeId }) {
@@ -2142,7 +2140,7 @@ export function createQQV2ProductionRuntime(options = {}) {
             const normalizedScopeId = await ensureScope(scopeId, null, { scopeSession });
             const result = await repository.deleteImageLibraryAssets(normalizedScopeId, assetIds, { scopeSession });
             await revokeMissingMediaRenderLeases(normalizedScopeId);
-            await notifySubscribers(normalizedScopeId);
+            await notifySubscribers(normalizedScopeId, { reason: 'image-library-assets-deleted' });
             return result;
         },
         async updatePrivateProfile({ scopeId, conversationId, profile = {} }) {

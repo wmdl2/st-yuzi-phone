@@ -6,10 +6,7 @@ import {
     AVATAR_FRAME_SCALE_MIN,
     moveAvatarFrameTransform,
     normalizeAvatarFrameTransform,
-    scaleAvatarFrameTransform,
 } from '../resources/avatar-frame-transform.js';
-
-const FRAME_SCALE_EPSILON = 1e-6;
 
 export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {}) {
     const source = String(rawDataUrl || '');
@@ -25,10 +22,11 @@ export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {})
     overlay.className = 'phone-image-crop-overlay phone-avatar-frame-calibration-overlay';
     overlay.innerHTML = `
         <div class="phone-image-crop-dialog phone-avatar-frame-calibration-dialog" role="dialog" aria-modal="true">
-            <div class="phone-image-crop-head">
+            <div class="phone-image-crop-head phone-avatar-frame-calibration-head">
                 <div class="phone-image-crop-title"></div>
-                <div class="phone-image-crop-desc"></div>
+                <button type="button" class="phone-settings-btn phone-image-crop-confirm">${t`确认上传`}</button>
             </div>
+            <div class="phone-image-crop-desc"></div>
             <div class="phone-image-crop-stage-wrap">
                 <div class="phone-avatar-frame-calibration-stage">
                     <img class="phone-avatar-frame-calibration-image" alt="${t`待校准头像框`}">
@@ -37,16 +35,16 @@ export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {})
                 </div>
             </div>
             <div class="phone-image-crop-actions">
-                <div class="phone-image-crop-actions-secondary">
+                <div class="phone-image-crop-actions-secondary yuzi-qq-settings-range-row">
                     <button type="button" class="phone-settings-btn phone-image-crop-reset">${t`重置`}</button>
-                    <div class="phone-avatar-frame-calibration-zoom" role="group" aria-label="${t`调整头像框大小`}">
-                        <button type="button" class="phone-settings-btn phone-avatar-frame-calibration-zoom-out" aria-label="${t`缩小`}">−</button>
-                        <button type="button" class="phone-settings-btn phone-avatar-frame-calibration-zoom-in" aria-label="${t`放大头像框`}">＋</button>
+                    <div class="phone-ios-slider-row phone-avatar-frame-calibration-zoom">
+                        <input type="range" class="phone-avatar-frame-calibration-scale"
+                            min="${AVATAR_FRAME_SCALE_MIN}" max="${AVATAR_FRAME_SCALE_MAX}" step="0.001"
+                            aria-label="${t`调整头像框大小`}">
                     </div>
                 </div>
                 <div class="phone-image-crop-actions-main">
                     <button type="button" class="phone-settings-btn phone-image-crop-cancel">${t`取消`}</button>
-                    <button type="button" class="phone-settings-btn phone-settings-btn-primary phone-image-crop-confirm">${t`确认上传`}</button>
                 </div>
             </div>
         </div>
@@ -57,11 +55,11 @@ export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {})
     const imageEl = overlay.querySelector('.phone-avatar-frame-calibration-image');
     const stageEl = overlay.querySelector('.phone-avatar-frame-calibration-stage');
     const resetBtn = overlay.querySelector('.phone-image-crop-reset');
-    const zoomOutBtn = overlay.querySelector('.phone-avatar-frame-calibration-zoom-out');
-    const zoomInBtn = overlay.querySelector('.phone-avatar-frame-calibration-zoom-in');
+    const scaleInput = overlay.querySelector('.phone-avatar-frame-calibration-scale');
     const cancelBtn = overlay.querySelector('.phone-image-crop-cancel');
     const confirmBtn = overlay.querySelector('.phone-image-crop-confirm');
 
+    overlay.querySelector('[role="dialog"]')?.setAttribute('aria-label', title);
     if (titleEl) titleEl.textContent = title;
     if (descEl) descEl.textContent = description;
     if (imageEl instanceof HTMLImageElement) imageEl.src = source;
@@ -74,19 +72,10 @@ export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {})
     let unmountOverlay = () => {};
     const isDialogActive = () => !isClosed && !runtime.isDisposed();
 
-    const syncZoomButtons = () => {
-        if (zoomOutBtn instanceof HTMLButtonElement) {
-            zoomOutBtn.disabled = transform.scale <= AVATAR_FRAME_SCALE_MIN + FRAME_SCALE_EPSILON;
-        }
-        if (zoomInBtn instanceof HTMLButtonElement) {
-            zoomInBtn.disabled = transform.scale >= AVATAR_FRAME_SCALE_MAX - FRAME_SCALE_EPSILON;
-        }
-    };
-
     const renderTransform = () => {
         if (!isDialogActive() || !(imageEl instanceof HTMLElement)) return;
         imageEl.style.transform = `translate(${transform.x * 100}%, ${transform.y * 100}%) scale(${transform.scale})`;
-        syncZoomButtons();
+        if (scaleInput instanceof HTMLInputElement) scaleInput.value = String(transform.scale);
     };
 
     const stopDragging = () => {
@@ -151,14 +140,9 @@ export async function openAvatarFrameCalibrationDialog(rawDataUrl, options = {})
         transform = { ...initialTransform };
         renderTransform();
     });
-    runtime.addEventListener(zoomOutBtn, 'click', () => {
-        if (!isDialogActive()) return;
-        transform = scaleAvatarFrameTransform(transform, -1);
-        renderTransform();
-    });
-    runtime.addEventListener(zoomInBtn, 'click', () => {
-        if (!isDialogActive()) return;
-        transform = scaleAvatarFrameTransform(transform, 1);
+    runtime.addEventListener(scaleInput, 'input', () => {
+        if (!isDialogActive() || !(scaleInput instanceof HTMLInputElement)) return;
+        transform = normalizeAvatarFrameTransform({ ...transform, scale: scaleInput.valueAsNumber });
         renderTransform();
     });
     runtime.addEventListener(cancelBtn, 'click', () => closeDialog(null));

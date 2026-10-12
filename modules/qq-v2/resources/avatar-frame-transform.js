@@ -12,7 +12,8 @@ function clamp(value, min, max, fallback = min) {
 
 export function avatarFrameOffsetLimit(scale) {
     const safeScale = clamp(scale, AVATAR_FRAME_SCALE_MIN, AVATAR_FRAME_SCALE_MAX, 1);
-    return Math.max(0, (FRAME_BOX_RATIO * safeScale - 1) / (2 * FRAME_BOX_RATIO));
+    // Decorative frames may move to the avatar's edge; they need not cover the avatar.
+    return (FRAME_BOX_RATIO * safeScale + 1) / (2 * FRAME_BOX_RATIO);
 }
 
 export function normalizeAvatarFrameTransform(value = {}) {

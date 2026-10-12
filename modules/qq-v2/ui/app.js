@@ -1108,6 +1108,7 @@ export function createQQApp({
     let voiceBindings = new Map();
     let imageLibrarySelectionMode = false;
     let imageLibraryLazyLoading = null;
+    let imageLibraryView = null;
     const enqueueSettingsSave = createSettingsSaveQueue();
 
     const clearImageLibrarySelection = () => {
@@ -1118,6 +1119,7 @@ export function createQQApp({
     const disposeImageLibraryLazyLoading = () => {
         imageLibraryLazyLoading?.dispose();
         imageLibraryLazyLoading = null;
+        imageLibraryView = null;
     };
 
     const mediaRenderLeases = createMediaRenderLeaseCoordinator(facade);
@@ -3981,26 +3983,27 @@ export function createQQApp({
         const selectionDone = createButton(t("完成"), 'yuzi-qq-image-library-selection-done');
         selectionBar.append(selectionCount, selectionDone);
         content.prepend(selectionBar);
+        const selectionGroups = [];
         const syncSelection = () => {
+            const deleting = imageLibraryView?.deleting === true;
             main.classList.toggle('is-selection-mode', imageLibrarySelectionMode);
             const selectedCount = selectedImageAssetIds.size + selectedStickerIds.size;
             selectionBar.hidden = !imageLibrarySelectionMode;
             selectionCount.textContent = t`已选择 ${selectedCount} 项`;
-            deleteAction.disabled = imageLibrarySelectionMode && selectedCount === 0;
+            selectionDone.disabled = deleting;
+            deleteAction.disabled = deleting || (imageLibrarySelectionMode && selectedCount === 0);
             deleteAction.setAttribute('aria-label', imageLibrarySelectionMode ? t("删除已选资源") : t("进入删除模式"));
-            main.querySelectorAll('[data-qq-image-library-item]').forEach((item) => {
-                item.classList.toggle('is-selected', selectedImageAssetIds.has(item.dataset.qqImageLibraryItem));
-                item.querySelector('.yuzi-qq-image-library-tick')?.setAttribute(
-                    'aria-hidden',
-                    String(!selectedImageAssetIds.has(item.dataset.qqImageLibraryItem)),
-                );
-            });
-            main.querySelectorAll('[data-qq-sticker-library-item]').forEach((item) => {
-                item.classList.toggle('is-selected', selectedStickerIds.has(item.dataset.qqStickerLibraryItem));
-                item.querySelector('.yuzi-qq-image-library-tick')?.setAttribute(
-                    'aria-hidden',
-                    String(!selectedStickerIds.has(item.dataset.qqStickerLibraryItem)),
-                );
+            selectionGroups.forEach(({ items, selectedIds, selectAll, clearAll }) => {
+                let count = 0;
+                items.forEach((item, resourceId) => {
+                    const selected = selectedIds.has(resourceId);
+                    if (selected) count += 1;
+                    item.classList.toggle('is-selected', selected);
+                    item.setAttribute('aria-pressed', String(selected));
+                    item.querySelector('.yuzi-qq-image-library-tick')?.setAttribute('aria-hidden', String(!selected));
+                });
+                selectAll.disabled = deleting || count === items.size;
+                clearAll.disabled = deleting || count === 0;
             });
         };
         selectionDone.addEventListener('click', () => {
@@ -4020,12 +4023,36 @@ export function createQQApp({
             const card = createElement('section', 'yuzi-qq-image-library-card');
             card.setAttribute('aria-label', title);
             const heading = createElement('h2', 'yuzi-qq-image-library-heading');
-            heading.textContent = title;
+            const label = createElement('span');
+            label.textContent = title;
+            const items = new Map();
+            const selectedIds = sticker ? selectedStickerIds : selectedImageAssetIds;
+            const sectionAction = (text, icon, select) => {
+                const button = createButton('', 'yuzi-qq-icon-button yuzi-qq-image-library-section-action', {
+                    'aria-label': `${title} · ${text}`,
+                    title: text,
+                });
+                button.append(createIcon(icon));
+                button.addEventListener('click', () => {
+                    if (!imageLibrarySelectionMode || imageLibraryView?.deleting) return;
+                    items.forEach((_item, resourceId) => {
+                        if (select) selectedIds.add(resourceId);
+                        else selectedIds.delete(resourceId);
+                    });
+                    syncSelection();
+                });
+                return button;
+            };
+            const selectAll = sectionAction(t("全选"), 'check-double', true);
+            const clearAll = sectionAction(t("取消全选"), 'square-minus', false);
+            const actions = createElement('span', 'yuzi-qq-image-library-section-actions');
+            actions.append(selectAll, clearAll);
+            heading.append(label, actions);
+            selectionGroups.push({ sticker, items, selectedIds, selectAll, clearAll });
             const grid = createElement('div', 'yuzi-qq-image-library-grid');
             assets.forEach((asset) => {
                 const resourceId = asText(sticker ? asset.stickerId : asset.assetId);
                 if (!resourceId) return;
-                const selectedIds = sticker ? selectedStickerIds : selectedImageAssetIds;
                 const item = createButton('', 'yuzi-qq-image-library-item', {
                     'aria-label': sticker ? t("选择表情") : t("选择图片"),
                     [sticker ? 'data-qq-sticker-library-item' : 'data-qq-image-library-item']: resourceId,
@@ -4041,11 +4068,13 @@ export function createQQApp({
                     longPressTimer = null;
                 };
                 item.addEventListener('pointerdown', (event) => {
+                    if (imageLibraryView?.deleting) return;
                     if (event.button !== undefined && event.button !== 0) return;
                     longPressed = false;
                     clearLongPress();
                     longPressTimer = setTimeout(() => {
                         longPressTimer = null;
+                        if (!isActive(token) || !item.isConnected || imageLibraryView?.deleting) return;
                         longPressed = true;
                         imageLibrarySelectionMode = true;
                         selectedIds.add(resourceId);
@@ -4059,7 +4088,7 @@ export function createQQApp({
                         longPressed = false;
                         return;
                     }
-                    if (!imageLibrarySelectionMode) return;
+                    if (!imageLibrarySelectionMode || imageLibraryView?.deleting) return;
                     if (selectedIds.has(resourceId)) selectedIds.delete(resourceId);
                     else selectedIds.add(resourceId);
                     syncSelection();
@@ -4100,6 +4129,7 @@ export function createQQApp({
                         image.src = render.url;
                     });
                 }
+                items.set(resourceId, item);
                 grid.append(item);
             });
             const upload = createButton('', 'yuzi-qq-image-library-item yuzi-qq-image-library-upload-action', sticker
@@ -4119,6 +4149,26 @@ export function createQQApp({
         const footer = createElement('p', 'phone-ios-group-footer yuzi-qq-image-library-footer');
         footer.textContent = t("单张图片不超过 8 MB。");
         content.append(footer);
+        imageLibraryView = {
+            token,
+            deleting: false,
+            importing: false,
+            syncSelection,
+            removeDeleted(assetIds, stickerIds) {
+                selectionGroups.forEach(({ sticker, items, selectedIds }) => {
+                    (sticker ? stickerIds : assetIds).forEach((resourceId) => {
+                        selectedIds.delete(resourceId);
+                        const item = items.get(resourceId);
+                        if (!item) return;
+                        const visual = item.lastElementChild;
+                        lazyLoader.unobserve(visual);
+                        lazyTasks.delete(visual);
+                        item.remove();
+                        items.delete(resourceId);
+                    });
+                });
+            },
+        };
         syncSelection();
         return main;
     };
@@ -5569,6 +5619,9 @@ export function createQQApp({
     };
 
     const confirmImageLibraryPackImport = (source) => {
+        const view = imageLibraryView;
+        const libraryPage = page;
+        if (!view || !isActive(view.token)) return;
         const content = createElement('div', 'yuzi-qq-confirm-copy');
         const copy = createElement('p');
         copy.textContent = t("导入会追加头像、资料背景、聊天背景和表情，也会追加头像框、气泡和套装；已配套的头像框与气泡会一起保留。相同资源 ID 会自动添加 (1)、(2)。");
@@ -5578,20 +5631,32 @@ export function createQQApp({
         cancel.addEventListener('click', clearOverlay);
         const confirm = createButton(t("导入"), 'yuzi-qq-primary-button');
         confirm.addEventListener('click', async () => {
+            if (view.importing || !isActive(view.token)) return;
+            const importOverlay = overlay;
+            view.importing = true;
             confirm.disabled = true;
             confirm.textContent = t("导入中…");
-            const result = await facade.intent.importImageLibraryPack({ source });
-            if (!result?.ok) {
+            status.textContent = '';
+            try {
+                const result = await facade.intent.importImageLibraryPack({ source });
+                if (!result?.ok) {
+                    status.textContent = result?.error?.message || t("图片资料导入失败");
+                    return;
+                }
+                if (disposed || !isCurrent()) return;
+                if (page === libraryPage) clearImageLibrarySelection();
+                const imported = asObject(result.imported);
+                shell.showToast?.(t`已导入：头像 ${asInteger(imported.avatars)}，头像框 ${asInteger(imported.avatarFrames)}，气泡 ${asInteger(imported.bubbles)}，套装 ${asInteger(imported.outfits)}，资料背景 ${asInteger(imported.profileBackgrounds)}，聊天背景 ${asInteger(imported.chatBackgrounds)}，表情 ${asInteger(imported.stickers)}`, false);
+                if (!isActive(view.token) || imageLibraryView !== view) return;
+                if (overlay === importOverlay) clearOverlay();
+                await render();
+            } catch (error) {
+                status.textContent = error?.message || t("图片资料导入失败");
+            } finally {
+                view.importing = false;
                 confirm.disabled = false;
                 confirm.textContent = t("导入");
-                status.textContent = result?.error?.message || t("图片资料导入失败");
-                return;
             }
-            clearImageLibrarySelection();
-            clearOverlay();
-            const imported = asObject(result.imported);
-            shell.showToast?.(t`已导入：头像 ${asInteger(imported.avatars)}，头像框 ${asInteger(imported.avatarFrames)}，气泡 ${asInteger(imported.bubbles)}，套装 ${asInteger(imported.outfits)}，资料背景 ${asInteger(imported.profileBackgrounds)}，聊天背景 ${asInteger(imported.chatBackgrounds)}，表情 ${asInteger(imported.stickers)}`, false);
-            await render();
         });
         showDialog({
             title: t("导入图片资料"),
@@ -5629,39 +5694,68 @@ export function createQQApp({
         const assetIds = [...selectedImageAssetIds];
         const stickerIds = [...selectedStickerIds];
         const total = assetIds.length + stickerIds.length;
-        if (!imageLibrarySelectionMode || total === 0) return;
+        const view = imageLibraryView;
+        const libraryPage = page;
+        if (!imageLibrarySelectionMode || total === 0 || !view || view.deleting) return;
         const status = createElement('p', 'yuzi-qq-form-error');
         const cancel = createButton(t("取消"), 'yuzi-qq-secondary-button');
         cancel.addEventListener('click', clearOverlay);
         const confirm = createButton(t("删除"), 'yuzi-qq-danger-button');
         confirm.addEventListener('click', async () => {
+            if (view.deleting || !isActive(view.token)) return;
+            const deletionOverlay = overlay;
+            view.deleting = true;
+            view.syncSelection();
             confirm.disabled = true;
             confirm.textContent = t("删除中…");
-            const [imageResult, stickerResult] = await Promise.all([
-                assetIds.length > 0
-                    ? facade.intent.deleteImageLibraryAssets({ assetIds })
-                    : Promise.resolve({ ok: true, result: { deletedAssetIds: [] } }),
-                stickerIds.length > 0
-                    ? facade.intent.deleteStickers({ stickerIds })
-                    : Promise.resolve({ ok: true, result: { deletedStickerIds: [] } }),
-            ]);
-            if (!imageResult?.ok || !stickerResult?.ok) {
+            status.textContent = '';
+            try {
+                const [imageResult, stickerResult] = await Promise.all([
+                    assetIds.length > 0
+                        ? facade.intent.deleteImageLibraryAssets({ assetIds })
+                        : Promise.resolve({ ok: true, result: { deletedAssetIds: [] } }),
+                    stickerIds.length > 0
+                        ? facade.intent.deleteStickers({ stickerIds })
+                        : Promise.resolve({ ok: true, result: { deletedStickerIds: [] } }),
+                ]);
+                const deletedAssetIds = imageResult?.ok ? imageResult.result?.deletedAssetIds || assetIds : [];
+                const deletedStickerIds = stickerResult?.ok ? stickerResult.result?.deletedStickerIds || stickerIds : [];
+                await Promise.all([
+                    mediaRenderLeases.invalidate(deletedAssetIds),
+                    avatarRenderLeases.invalidate(deletedAssetIds),
+                    backgroundRenderLeases.invalidate(deletedAssetIds),
+                    bubbleRenderLeases.invalidate(deletedAssetIds),
+                    profileLibraryRenderLeases.invalidate(deletedAssetIds),
+                    stickerRenderLeases.invalidate(deletedStickerIds),
+                ]);
+                deletedAssetIds.forEach((assetId) => {
+                    avatarFrameMetadata.delete(assetId);
+                    bubbleMetadata.delete(assetId);
+                });
+                const succeeded = imageResult?.ok && stickerResult?.ok;
+                if (succeeded && page === libraryPage) clearImageLibrarySelection();
+                if (!isActive(view.token) || imageLibraryView !== view) {
+                    imageLibraryView?.syncSelection();
+                    return;
+                }
+                const scrollSnapshot = viewScrollState.capture();
+                view.removeDeleted(deletedAssetIds, deletedStickerIds);
+                viewScrollState.restore(scrollSnapshot, { token: view.token, isCurrent: isActive });
+                if (!succeeded) {
+                    status.textContent = imageResult?.error?.message
+                        || stickerResult?.error?.message
+                        || t("删除失败");
+                    return;
+                }
+                if (overlay === deletionOverlay) clearOverlay();
+            } catch (error) {
+                status.textContent = error?.message || t("删除失败");
+            } finally {
+                view.deleting = false;
+                if (imageLibraryView === view) view.syncSelection();
                 confirm.disabled = false;
                 confirm.textContent = t("删除");
-                status.textContent = imageResult?.error?.message
-                    || stickerResult?.error?.message
-                    || t("删除失败");
-                return;
             }
-            const deletedAssetIds = imageResult.result?.deletedAssetIds || assetIds;
-            await Promise.all([
-                avatarRenderLeases.invalidate(deletedAssetIds),
-                backgroundRenderLeases.invalidate(deletedAssetIds),
-            ]);
-            deletedAssetIds.forEach((assetId) => avatarFrameMetadata.delete(assetId));
-            clearImageLibrarySelection();
-            clearOverlay();
-            await render();
         });
         showDialog({
             title: t`\u5220\u9664 ${total} \u9879\u8d44\u6e90`,
@@ -6112,6 +6206,11 @@ export function createQQApp({
             void render().catch(report);
             return this;
         },
+        handleChange: (event) => (
+            ((event?.reason === 'image-library-assets-deleted' && imageLibraryView?.deleting === true)
+                || (event?.reason === 'image-library-pack-imported' && imageLibraryView?.importing === true))
+            && isActive(imageLibraryView.token)
+        ),
         refresh: () => render(),
         suspend() {
             voicePlayback.stop();

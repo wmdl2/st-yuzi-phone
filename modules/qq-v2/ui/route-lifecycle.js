@@ -39,6 +39,8 @@ export function createQQRouteLifecycle({
             const cleanup = await facade.subscribe(event => {
                 if (LOCAL_NAVIGATION_REASONS.has(String(event?.reason || '').trim())
                     || String(event?.scopeId || '').trim() !== activeScopeId || !isActive() || page?.isConnected === false) return Promise.resolve();
+                // A local mutation can update its mounted view without a second full redraw.
+                if (app?.handleChange?.(event) === true) return Promise.resolve();
                 defer();
                 return drain();
             });
