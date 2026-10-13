@@ -108,6 +108,18 @@ async function main() {
     ].forEach((needle) => {
         assertIncludes(allSql, needle, `SQL builder 必须按有无负号截取 10 或 11 位日期：${needle}`);
     });
+    [signatureSql, updateSql].forEach((sql) => {
+        [
+            `${signedDateSql('time_span')} AS start_date`,
+            'endpoint_relations AS (',
+            'julianday(COALESCE(start_date, target_date))',
+            'WHEN start_relation = end_relation THEN end_relation',
+            "ELSE start_relation || ' ~ ' || end_relation",
+        ].forEach((needle) => {
+            assertIncludes(sql, needle, `签名与写入必须共用两端关系计算、单端回退和相同文案合并：${needle}`);
+        });
+    });
+    assertIncludes(signatureSql, 'ON computed_relation.target_row_id = chronicle_inputs.row_id', '待更新检测必须通过共享计算的目标行身份连接');
     ['一周', '半个月', '三周', '半年'].forEach((needle) => {
         assertIncludes(allSql, needle, `SQL builder 必须覆盖文案 ${needle}`);
     });

@@ -1727,6 +1727,10 @@
     line-height: var(--yuzi-qq-body-line-height);
 }
 
+.yuzi-qq-message-bubble {
+    overflow-wrap: anywhere;
+}
+
 .yuzi-qq-message.is-self .yuzi-qq-message-bubble,
 .yuzi-qq-message.is-self .yuzi-qq-voice-message,
 .yuzi-qq-message.is-self .yuzi-qq-narrative-card,

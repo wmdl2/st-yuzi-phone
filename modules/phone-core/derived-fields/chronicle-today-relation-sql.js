@@ -165,8 +165,9 @@ function buildRelativeRelationCaseSql(diffExpression = 'diff_days') {
 
 // Chronicle table contract requires time_span to be "YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM",
 // with an optional leading minus on either year.
-// The SQL path intentionally supports that strict ISO-leading format only: end date wins,
-// and SQLite date(...) returning NULL falls back to the left segment. Broader legacy
+// The SQL path intentionally supports that strict ISO-leading format only: relate both
+// endpoints to today, collapse equal labels, and fall back to the valid endpoint when
+// SQLite date(...) returns NULL for the other. Broader legacy
 // date-relation.js parsing (Chinese numerals / abstract dates) is outside this SQL batch
 // derivation boundary; non-ISO rows are treated as invalid inputs, skipped, and reported
 // by buildChronicleInvalidTimeSpanDebugSql().
@@ -176,13 +177,34 @@ function buildLeadingIsoDateSql(expression) {
 }
 
 const TODAY_DATE_EXPRESSION = buildLeadingIsoDateSql('cur_time');
+const START_DATE_EXPRESSION = buildLeadingIsoDateSql('time_span');
 const TARGET_DATE_EXPRESSION = `COALESCE(
     CASE
         WHEN INSTR(time_span, '~') > 0 THEN ${buildLeadingIsoDateSql("SUBSTR(time_span, INSTR(time_span, '~') + 1)")}
         ELSE NULL
     END,
-    ${buildLeadingIsoDateSql('time_span')}
+    ${START_DATE_EXPRESSION}
 )`;
+
+function buildComputedRelationCtesSql(source) {
+    return `endpoint_relations AS (
+    SELECT
+        row_id AS target_row_id,
+        ${buildRelativeRelationCaseSql('CAST(julianday(today_date) - julianday(COALESCE(start_date, target_date)) AS INTEGER)')} AS start_relation,
+        ${buildRelativeRelationCaseSql('CAST(julianday(today_date) - julianday(target_date) AS INTEGER)')} AS end_relation
+    FROM ${source}
+    WHERE today_date IS NOT NULL AND target_date IS NOT NULL
+),
+computed_relation AS (
+    SELECT
+        target_row_id,
+        CASE
+            WHEN start_relation = end_relation THEN end_relation
+            ELSE start_relation || ' ~ ' || end_relation
+        END AS new_relation
+    FROM endpoint_relations
+)`;
+}
 
 export function buildChronicleTodayRelationSignatureSql(anchorTable = 'global_state', tableName = 'chronicle') {
     const anchorTableName = normalizeChronicleTodayRelationAnchorTable(anchorTable);
@@ -199,17 +221,12 @@ chronicle_inputs AS (
         row_id,
         COALESCE(TRIM(time_span), '') AS time_span,
         COALESCE(TRIM(today_relation), '') AS today_relation,
+        ${START_DATE_EXPRESSION} AS start_date,
         ${TARGET_DATE_EXPRESSION} AS target_date,
         (SELECT today_date FROM current_anchor) AS today_date
     FROM ${chronicleTableName}
 ),
-computed_relation AS (
-    SELECT
-        row_id,
-        ${buildRelativeRelationCaseSql('CAST(julianday(today_date) - julianday(target_date) AS INTEGER)')} AS new_relation
-    FROM chronicle_inputs
-    WHERE today_date IS NOT NULL AND target_date IS NOT NULL
-),
+${buildComputedRelationCtesSql('chronicle_inputs')},
 ordered_sources AS (
     SELECT CAST(row_id AS TEXT) || char(31) || time_span AS source_part
     FROM chronicle_inputs
@@ -230,7 +247,7 @@ pending_updates AS (
     SELECT chronicle_inputs.row_id
     FROM chronicle_inputs
     INNER JOIN computed_relation
-        ON computed_relation.row_id = chronicle_inputs.row_id
+        ON computed_relation.target_row_id = chronicle_inputs.row_id
     WHERE computed_relation.new_relation IS NOT NULL
         AND COALESCE(chronicle_inputs.today_relation, '') <> COALESCE(computed_relation.new_relation, '')
 )
@@ -256,17 +273,12 @@ parsed_chronicle AS (
     SELECT
         row_id,
         today_relation,
+        ${START_DATE_EXPRESSION} AS start_date,
         ${TARGET_DATE_EXPRESSION} AS target_date,
         (SELECT today_date FROM current_anchor) AS today_date
     FROM ${chronicleTableName}
 ),
-computed_relation AS (
-    SELECT
-        row_id AS target_row_id,
-        ${buildRelativeRelationCaseSql('CAST(julianday(today_date) - julianday(target_date) AS INTEGER)')} AS new_relation
-    FROM parsed_chronicle
-    WHERE today_date IS NOT NULL AND target_date IS NOT NULL
-)
+${buildComputedRelationCtesSql('parsed_chronicle')}
 UPDATE ${chronicleTableName}
 SET today_relation = computed_relation.new_relation
 FROM computed_relation
